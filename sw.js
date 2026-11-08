@@ -1,1 +1,24 @@
-const CACHE='mi-control-v4';const ASSETS=['./','./index.html','./manifest.webmanifest'];self.addEventListener('install',e=>{self.skipWaiting();e.waitUntil(caches.open(CACHE).then(c=>c.addAll(ASSETS)))});self.addEventListener('activate',e=>e.waitUntil(Promise.all([caches.keys().then(keys=>Promise.all(keys.filter(k=>k!==CACHE).map(k=>caches.delete(k)))),self.clients.claim()])));self.addEventListener('fetch',e=>e.respondWith(fetch(e.request).then(r=>{let x=r.clone();caches.open(CACHE).then(c=>c.put(e.request,x));return r}).catch(()=>caches.match(e.request))));
+const CACHE='mi-control-v4-mobile-2';
+const ASSETS=['./','./index.html','./manifest.webmanifest'];
+self.addEventListener('install',event=>{
+  self.skipWaiting();
+  event.waitUntil(caches.open(CACHE).then(cache=>cache.addAll(ASSETS)));
+});
+self.addEventListener('activate',event=>{
+  event.waitUntil(Promise.all([
+    caches.keys().then(keys=>Promise.all(keys.filter(key=>key!==CACHE).map(key=>caches.delete(key)))),
+    self.clients.claim()
+  ]));
+});
+self.addEventListener('fetch',event=>{
+  if(event.request.method!=='GET'||new URL(event.request.url).origin!==self.location.origin)return;
+  event.respondWith(
+    fetch(event.request,{cache:'no-store'}).then(response=>{
+      if(response.ok){
+        const copy=response.clone();
+        caches.open(CACHE).then(cache=>cache.put(event.request,copy)).catch(()=>{});
+      }
+      return response;
+    }).catch(()=>caches.match(event.request))
+  );
+});
