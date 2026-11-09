@@ -2318,76 +2318,26 @@
         e.target.value = "";
       }
       function exportCSV() {
-        let rows = [
-          [
-            "TIPO",
-            "FECHA",
-            "DETALLE",
-            "MONTO",
-            "CUENTA",
-            "OBJETIVO",
-            "ENTRADA",
-            "SALIDA",
-            "HE_MIN",
-          ],
-        ];
+        // CSV para Excel en Chile: punto y coma entre columnas y coma decimal.
+        // Redondear antes de exportar evita artefactos de coma flotante como 15399.999999999998.
+        const montoCSV = (value) => {
+          const n = Number(value);
+          return Number.isFinite(n) ? String(Math.round((n + Number.EPSILON) * 100) / 100).replace(".", ",") : "";
+        };
+        const rows = [["TIPO","FECHA","DETALLE","MONTO","CUENTA","OBJETIVO","ENTRADA","SALIDA","HE_MIN"]];
         db.jornadas.forEach((j) => {
-          let c = calcJ(j);
-          rows.push([
-            "JORNADA",
-            j.fecha,
-            j.nota || "",
-            c.trato ? db.config.trato : (c.he / 60) * db.config.valorHE,
-            "",
-            "",
-            j.entrada,
-            j.salida,
-            c.he,
-          ]);
+          const c = calcJ(j);
+          rows.push(["JORNADA",j.fecha,j.nota || "",montoCSV(c.trato ? db.config.trato : (c.he / 60) * db.config.valorHE),"","",j.entrada,j.salida,c.he]);
         });
-        db.fin
-          .filter((x) => x.tipo === "gasto" || !x.tipo)
-          .forEach((x) =>
-            rows.push([
-              "GASTO",
-              x.fecha,
-              x.concepto,
-              x.monto,
-              "",
-              "",
-              "",
-              "",
-              "",
-            ]),
-          );
+        db.fin.filter((x) => x.tipo === "gasto" || !x.tipo).forEach((x) => {
+          rows.push(["GASTO",x.fecha,x.concepto,montoCSV(x.monto),"","","","",""]);
+        });
         db.movB.forEach((x) => {
-          let b = db.bolsillos.find((z) => z.id === x.bolsilloId);
-          rows.push([
-            x.tipo === "aporte" ? "AHORRO_APORTE" : "AHORRO_RETIRO",
-            x.fecha,
-            x.nota || "",
-            x.monto,
-            b?.cuenta || "",
-            b?.nombre || "",
-            "",
-            "",
-            "",
-          ]);
+          const b = db.bolsillos.find((z) => z.id === x.bolsilloId);
+          rows.push([x.tipo === "aporte" ? "AHORRO_APORTE" : "AHORRO_RETIRO",x.fecha,x.nota || "",montoCSV(x.monto),b?.cuenta || "",b?.nombre || "","","",""]);
         });
-        let csv =
-          "\ufeff" +
-          rows
-            .map((r) =>
-              r
-                .map((v) => '"' + String(v ?? "").replaceAll('"', '""') + '"')
-                .join(";"),
-            )
-            .join("\n");
-        download(
-          `turno-plus-${localDate()}.csv`,
-          csv,
-          "text/csv;charset=utf-8",
-        );
+        const csv = "\ufeffsep=;\r\n" + rows.map((row) => row.map((v) => '"' + String(v ?? "").replaceAll('"','""') + '"').join(";")).join("\r\n");
+        download(`turno-plus-${localDate()}.csv`,csv,"text/csv;charset=utf-8");
       }
       async function borrarTodo() {
         if (
@@ -2604,7 +2554,7 @@
       render();
       if ("serviceWorker" in navigator)
         navigator.serviceWorker
-          .register("sw.js?v=turno-plus-7")
+          .register("sw.js?v=turno-plus-8")
           .then((reg) => reg.update())
           .catch(() => {});
     </script>
