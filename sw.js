@@ -1,4 +1,4 @@
-const CACHE='turno-plus-v5';
+const CACHE='turno-plus-v6';
 const ASSETS=['./','./index.html','./manifest.webmanifest'];
 self.addEventListener('install',event=>{
   self.skipWaiting();
