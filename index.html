@@ -1351,7 +1351,7 @@
             class="moneyInput"
             type="text"
             inputmode="numeric"
-          /><p class="note">Bono trato automático según sueldo base y tramos Fabrinox. Bajo $500.000 se usa valor manual porque no existe tramo publicado.</p><h2 style="margin-top:20px">Proyección de sueldo líquido</h2><p class="note">Valores personales según tu contrato o última liquidación. El porcentaje de descuentos es aproximado y no equivale a un cálculo legal exacto.</p><label>Gratificación mensual estimada</label><input id="cfgGratificacion" class="moneyInput" type="text" inputmode="numeric" /><label>Colación y movilización (total)</label><input id="cfgAsignaciones" class="moneyInput" type="text" inputmode="numeric" /><label>Descuentos legales aproximados (% del imponible)</label><input id="cfgTasaDescuentos" type="number" min="0" max="50" step="0.01" /><label>Anticipo del período</label><input id="cfgAnticipo" class="moneyInput" type="text" inputmode="numeric" /><label>Día de cierre de remuneraciones</label
+          /><p class="note">Bono trato automático según sueldo base y tramos Fabrinox. Bajo $500.000 se usa valor manual porque no existe tramo publicado.</p><p class="note">El líquido se estima automáticamente con un descuento referencial del 18,19% sobre el imponible, basado en la liquidación de referencia. Puede variar respecto del pago real.</p><details style="margin:12px 0"><summary style="cursor:pointer;font-weight:700">Opcional: ajustar otros haberes o anticipo</summary><div style="padding-top:10px"><label>Gratificación mensual estimada</label><input id="cfgGratificacion" class="moneyInput" type="text" inputmode="numeric" /><label>Colación y movilización (total)</label><input id="cfgAsignaciones" class="moneyInput" type="text" inputmode="numeric" /><label>Anticipo del período</label><input id="cfgAnticipo" class="moneyInput" type="text" inputmode="numeric" /></div></details><label>Día de cierre de remuneraciones</label
           ><input id="cfgCierre" type="number" min="1" max="28" value="23" />
           <p class="note">
             El cierre incluye ese día. Las jornadas posteriores pasan al período
@@ -1686,7 +1686,7 @@
         const c = db.config;
         const imponible = Math.round((Number(c.sueldo)||0) + (Number(c.gratificacion)||0) + r.heMoney + r.trMoney);
         const asignaciones = Number(c.asignaciones)||0;
-        const descuentos = Math.round(imponible * (Number(c.tasaDescuentos)||0) / 100);
+        const descuentos = Math.round(imponible * 0.1819);
         const anticipo = Number(c.anticipo)||0;
         return {imponible, asignaciones, descuentos, anticipo, liquido: imponible + asignaciones - descuentos - anticipo};
       }
@@ -2280,7 +2280,6 @@
         cfgTrato.disabled = bonoTratoAutomatico(c.sueldo) !== null;
         cfgGratificacion.value = fmtCLP(c.gratificacion);
         cfgAsignaciones.value = fmtCLP(c.asignaciones);
-        cfgTasaDescuentos.value = c.tasaDescuentos;
         cfgAnticipo.value = fmtCLP(c.anticipo);
         cfgCierre.value = c.diaCierre || 23;
         cfgDiasComp.value = c.diasComp;
@@ -2294,14 +2293,11 @@
           return avisoApp("El cierre debe estar entre el día 1 y el 28");
         if (n < 1)
           return avisoApp("Los días por compensativo deben ser al menos 1");
-        const tasa = Number(cfgTasaDescuentos.value);
-        if (!Number.isFinite(tasa) || tasa < 0 || tasa > 50) return avisoApp("El descuento aproximado debe estar entre 0% y 50%");
         db.config = {
           ...db.config,
           nombre: cfgNombre.value.trim(),
           gratificacion: parseCLP(cfgGratificacion.value),
           asignaciones: parseCLP(cfgAsignaciones.value),
-          tasaDescuentos: tasa,
           anticipo: parseCLP(cfgAnticipo.value),
           sueldo: parseCLP(cfgSueldo.value),
           horas: Number(cfgHoras.value) || 42,
@@ -2684,7 +2680,7 @@
       render();
       if ("serviceWorker" in navigator)
         navigator.serviceWorker
-          .register("sw.js?v=turno-plus-13")
+          .register("sw.js?v=turno-plus-14")
           .then((reg) => reg.update())
           .catch(() => {});
     </script>
