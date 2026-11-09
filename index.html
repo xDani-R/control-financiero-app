@@ -2322,7 +2322,7 @@
         // Redondear antes de exportar evita artefactos de coma flotante como 15399.999999999998.
         const montoCSV = (value) => {
           const n = Number(value);
-          return Number.isFinite(n) ? String(Math.round((n + Number.EPSILON) * 100) / 100).replace(".", ",") : "";
+          return Number.isFinite(n) ? String(Math.round(n)) : "";
         };
         const rows = [["TIPO","FECHA","DETALLE","MONTO","CUENTA","OBJETIVO","ENTRADA","SALIDA","HE_MIN"]];
         db.jornadas.forEach((j) => {
@@ -2554,7 +2554,7 @@
       render();
       if ("serviceWorker" in navigator)
         navigator.serviceWorker
-          .register("sw.js?v=turno-plus-8")
+          .register("sw.js?v=turno-plus-9")
           .then((reg) => reg.update())
           .catch(() => {});
     </script>
