@@ -1103,11 +1103,11 @@
           </div>
           <p class="note" id="rPeriodo"></p>
           <div class="stat totalStat" style="margin-bottom:12px;padding:18px">
-            <small>Total estimado del período</small>
+            <small>Líquido estimado a recibir</small>
             <b class="money" id="rSueldoTotal" style="font-size:27px">$0</b>
-            <span class="subvalue">Sueldo base + horas extra + tratos</span>
+            <span class="subvalue">Proyección de pago después de descuentos</span>
             <p class="note" id="rSueldoDesglose" style="margin:8px 0 0"></p>
-            <p class="note" style="margin:4px 0 0">Estimación antes de descuentos; no es sueldo líquido.</p>
+            <p class="note" style="margin:4px 0 0">Estimación referencial; no reemplaza tu liquidación de sueldo.</p>
           </div>
           <div class="grid">
             <div class="stat heStat">
@@ -1351,7 +1351,7 @@
             class="moneyInput"
             type="text"
             inputmode="numeric"
-          /><label>Día de cierre de remuneraciones</label
+          /><h2 style="margin-top:20px">Proyección de sueldo líquido</h2><p class="note">Valores personales según tu contrato o última liquidación. El porcentaje de descuentos es aproximado y no equivale a un cálculo legal exacto.</p><label>Gratificación mensual estimada</label><input id="cfgGratificacion" class="moneyInput" type="text" inputmode="numeric" /><label>Colación y movilización (total)</label><input id="cfgAsignaciones" class="moneyInput" type="text" inputmode="numeric" /><label>Descuentos legales aproximados (% del imponible)</label><input id="cfgTasaDescuentos" type="number" min="0" max="50" step="0.01" /><label>Anticipo del período</label><input id="cfgAnticipo" class="moneyInput" type="text" inputmode="numeric" /><label>Día de cierre de remuneraciones</label
           ><input id="cfgCierre" type="number" min="1" max="28" value="23" />
           <p class="note">
             El cierre incluye ese día. Las jornadas posteriores pasan al período
@@ -1449,6 +1449,10 @@
           horas: 42,
           valorHE: 5250,
           trato: 88000,
+          gratificacion: 219115,
+          asignaciones: 100000,
+          tasaDescuentos: 18.19,
+          anticipo: 0,
           diaCierre: 23,
           diasComp: 7,
           horarios: {
@@ -1666,6 +1670,14 @@
         render();
         if (msg) toast(msg);
       }
+      function estimarLiquido(r) {
+        const c = db.config;
+        const imponible = Math.round((Number(c.sueldo)||0) + (Number(c.gratificacion)||0) + r.heMoney + r.trMoney);
+        const asignaciones = Number(c.asignaciones)||0;
+        const descuentos = Math.round(imponible * (Number(c.tasaDescuentos)||0) / 100);
+        const anticipo = Number(c.anticipo)||0;
+        return {imponible, asignaciones, descuentos, anticipo, liquido: imponible + asignaciones - descuentos - anticipo};
+      }
       function render() {
         let m = mesResumen.value || monthNow(),
           v = vistaResumen.value,
@@ -1678,8 +1690,9 @@
         rTratoMoney.textContent = money(r.trMoney);
         rTotalAdicional.textContent = money(r.heMoney + r.trMoney);
         const baseEstimado = Number(db.config.sueldo) || 0;
-        rSueldoTotal.textContent = money(Math.round(baseEstimado + r.heMoney + r.trMoney));
-        rSueldoDesglose.textContent = "Base " + money(baseEstimado) + " + HE " + money(Math.round(r.heMoney)) + " + tratos " + money(Math.round(r.trMoney));
+        const sueldo = estimarLiquido(r);
+        rSueldoTotal.textContent = money(sueldo.liquido);
+        rSueldoDesglose.textContent = "Imponible " + money(sueldo.imponible) + " + asignaciones " + money(sueldo.asignaciones) + " − descuentos aprox. " + money(sueldo.descuentos) + " − anticipo " + money(sueldo.anticipo);
         rComp.textContent = c.available;
         rProgTxt.textContent = `${c.progress} / ${c.n} días`;
         rProg.style.width = (c.progress / c.n) * 100 + "%";
@@ -2252,6 +2265,10 @@
         cfgHoras.value = c.horas;
         cfgValorHE.value = fmtCLP(c.valorHE);
         cfgTrato.value = fmtCLP(c.trato);
+        cfgGratificacion.value = fmtCLP(c.gratificacion);
+        cfgAsignaciones.value = fmtCLP(c.asignaciones);
+        cfgTasaDescuentos.value = c.tasaDescuentos;
+        cfgAnticipo.value = fmtCLP(c.anticipo);
         cfgCierre.value = c.diaCierre || 23;
         cfgDiasComp.value = c.diasComp;
         for (let i = 1; i <= 6; i++)
@@ -2264,8 +2281,15 @@
           return avisoApp("El cierre debe estar entre el día 1 y el 28");
         if (n < 1)
           return avisoApp("Los días por compensativo deben ser al menos 1");
+        const tasa = Number(cfgTasaDescuentos.value);
+        if (!Number.isFinite(tasa) || tasa < 0 || tasa > 50) return avisoApp("El descuento aproximado debe estar entre 0% y 50%");
         db.config = {
+          ...db.config,
           nombre: cfgNombre.value.trim(),
+          gratificacion: parseCLP(cfgGratificacion.value),
+          asignaciones: parseCLP(cfgAsignaciones.value),
+          tasaDescuentos: tasa,
+          anticipo: parseCLP(cfgAnticipo.value),
           sueldo: parseCLP(cfgSueldo.value),
           horas: Number(cfgHoras.value) || 42,
           valorHE: parseCLP(cfgValorHE.value),
@@ -2647,7 +2671,7 @@
       render();
       if ("serviceWorker" in navigator)
         navigator.serviceWorker
-          .register("sw.js?v=turno-plus-11")
+          .register("sw.js?v=turno-plus-12")
           .then((reg) => reg.update())
           .catch(() => {});
     </script>
