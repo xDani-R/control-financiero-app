@@ -1195,7 +1195,7 @@
           </button>
         </div>
         <div class="card">
-          <h2>Últimas jornadas</h2>
+          <h2>Mis jornadas</h2><label for="jFiltroMes">Consultar mes</label><select id="jFiltroMes" onchange="renderJ()"><option value="todos">Todos los meses</option></select>
           <p class="note">
             Aquí ves el resultado de cada día. Los totales del mes quedan en
             Inicio.
@@ -1947,10 +1947,15 @@
         save("Descanso anulado y días recuperados");
       }
       function renderJ() {
+        const filtro = document.getElementById("jFiltroMes");
+        const meses = [...new Set(db.jornadas.map(j => String(j.fecha || "").slice(0,7)).filter(m => /^\\d{4}-\\d{2}$/.test(m)))].sort().reverse();
+        const seleccionado = filtro.value || "todos";
+        filtro.innerHTML = '<option value="todos">Todos los meses</option>' + meses.map(m => '<option value="' + m + '">' + m.slice(5) + '-' + m.slice(0,4) + '</option>').join("");
+        filtro.value = seleccionado === "todos" || meses.includes(seleccionado) ? seleccionado : "todos";
         listaJ.innerHTML =
           [...db.jornadas]
+            .filter(j => filtro.value === "todos" || String(j.fecha || "").startsWith(filtro.value))
             .sort((a, b) => b.fecha.localeCompare(a.fecha))
-            .slice(0, 30)
             .map((j) => {
               let c = calcJ(j),
                 label =
@@ -2554,7 +2559,7 @@
       render();
       if ("serviceWorker" in navigator)
         navigator.serviceWorker
-          .register("sw.js?v=turno-plus-9")
+          .register("sw.js?v=turno-plus-10")
           .then((reg) => reg.update())
           .catch(() => {});
     </script>
