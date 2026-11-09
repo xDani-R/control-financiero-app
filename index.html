@@ -1323,6 +1323,9 @@
           /><button class="primary" onclick="exportCSV()">
             Exportar para Excel
           </button>
+          <p class="note">¿Tienes registros de otro dispositivo? Puedes recuperarlos desde el archivo descargado para Excel, sin borrar tus datos actuales.</p>
+          <button class="secondary" onclick="importCSVFile.click()">Importar jornadas desde Excel (.csv)</button>
+          <input class="hidden" id="importCSVFile" type="file" accept=".csv,text/csv,text/plain" onchange="importarCSV(event)" />
         </div>
       </section>
       <section id="config" class="page">
@@ -2331,6 +2334,81 @@
         };
         r.readAsText(f);
         e.target.value = "";
+      }
+      // Importa el mismo CSV que exporta Turno+, sin reemplazar datos existentes.
+      function leerCSVTurno(texto) {
+        const t = texto.replace(/^\uFEFF/, "").replace(/^sep=;\s*\r?\n/i, "");
+        const filas = []; let fila = [], celda = "", entreComillas = false;
+        for (let i = 0; i < t.length; i++) {
+          const c = t[i];
+          if (c === '"') {
+            if (entreComillas && t[i+1] === '"') { celda += '"'; i++; }
+            else entreComillas = !entreComillas;
+          } else if (c === ';' && !entreComillas) {
+            fila.push(celda); celda = "";
+          } else if ((c === '\n' || c === '\r') && !entreComillas) {
+            if (c === '\r' && t[i+1] === '\n') i++;
+            fila.push(celda); celda = "";
+            if (fila.some(v => v.trim())) filas.push(fila);
+            fila = [];
+          } else celda += c;
+        }
+        if (entreComillas) throw new Error("Hay comillas sin cerrar en el archivo");
+        if (celda || fila.length) { fila.push(celda); filas.push(fila); }
+        if (!filas.length) throw new Error("El archivo está vacío");
+        const cab = filas.shift().map(x => x.trim().toUpperCase());
+        const requeridas = ["TIPO","FECHA","DETALLE","MONTO","ENTRADA","SALIDA","HE_MIN"];
+        if (requeridas.some(k => !cab.includes(k))) throw new Error("No corresponde al Excel exportado por Turno+");
+        return filas.map(f => Object.fromEntries(cab.map((k,i) => [k, f[i] || ""])));
+      }
+      async function importarCSV(event) {
+        const archivo = event.target.files && event.target.files[0];
+        event.target.value = "";
+        if (!archivo) return;
+        try {
+          const filas = leerCSVTurno(await archivo.text());
+          const jornadas = filas.filter(x => x.TIPO === "JORNADA");
+          if (!jornadas.length) return avisoApp("El archivo no contiene jornadas para importar");
+          const fechasActuales = new Set(db.jornadas.map(x => x.fecha));
+          const fechasNuevas = new Set();
+          const nuevas = [];
+          const dudosas = [];
+          let repetidas = 0;
+          for (const x of jornadas) {
+            const f = x.FECHA.trim(), entrada = x.ENTRADA.trim(), salida = x.SALIDA.trim();
+            if (!/^\d{4}-\d{2}-\d{2}$/.test(f) || new Date(f+"T12:00").toISOString().slice(0,10) !== f ||
+                !/^(?:[01]\d|2[0-3]):[0-5]\d$/.test(entrada) ||
+                !/^(?:[01]\d|2[0-3]):[0-5]\d$/.test(salida) || mins(salida) <= mins(entrada))
+              throw new Error("Hay una jornada con fecha u horario inválido: " + f);
+            if (fechasActuales.has(f) || fechasNuevas.has(f)) { repetidas++; continue; }
+            fechasNuevas.add(f);
+            const dia = new Date(f+"T12:00").getDay();
+            const monto = Number(x.MONTO.replace(",", "."));
+            const heCSV = Number(x.HE_MIN);
+            const pareceTrato = dia !== 0 && heCSV === 0 && monto > 0;
+            if (pareceTrato) dudosas.push(f);
+            nuevas.push({id:uid(),fecha:f,tipo:pareceTrato ? "festivo" : "normal",entrada,salida,nota:x.DETALLE || ""});
+          }
+          if (!nuevas.length) return avisoApp("No hay jornadas nuevas. Las fechas del archivo ya están registradas.");
+          const muestra = nuevas.slice(0,3).map(j=>fechaCL(j.fecha)).join(", ");
+          const aviso = "Se encontraron " + jornadas.length + " jornadas. Se agregarán " + nuevas.length +
+            " (" + muestra + (nuevas.length > 3 ? "…" : "") + "). Se omitirán " + repetidas +
+            " fechas repetidas. " + (dudosas.length ? "Se detectaron " + dudosas.length +
+            " posibles tratos fuera de domingo, identificados por su monto; revisa esas fechas después de importar. " : "") +
+            "No se borrarán tus datos actuales. ¿Importar ahora?";
+          if (!await confirmarAccion(aviso)) return;
+          // Respaldar en memoria la colección antes de intentar guardar.
+          const anterior = db.jornadas;
+          db.jornadas = [...anterior, ...nuevas];
+          try { persist(); } catch (err) {
+            db.jornadas = anterior;
+            return avisoApp("No se pudo guardar. No se modificaron las jornadas anteriores.");
+          }
+          render();
+          avisoApp("Se importaron " + nuevas.length + " jornadas. Revisa tus horarios y tratos en Jornadas.");
+        } catch (err) {
+          avisoApp("No se pudo leer el Excel: " + (err.message || "formato no válido"));
+        }
       }
       function exportCSV() {
         // CSV para Excel en Chile: punto y coma entre columnas y coma decimal.
