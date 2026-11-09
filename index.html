@@ -1102,6 +1102,13 @@
             </select>
           </div>
           <p class="note" id="rPeriodo"></p>
+          <div class="stat totalStat" style="margin-bottom:12px;padding:18px">
+            <small>Total estimado del período</small>
+            <b class="money" id="rSueldoTotal" style="font-size:27px">$0</b>
+            <span class="subvalue">Sueldo base + horas extra + tratos</span>
+            <p class="note" id="rSueldoDesglose" style="margin:8px 0 0"></p>
+            <p class="note" style="margin:4px 0 0">Estimación antes de descuentos; no es sueldo líquido.</p>
+          </div>
           <div class="grid">
             <div class="stat heStat">
               <small>Horas extra</small><b id="rHE">0 h 00 min</b
@@ -1667,6 +1674,9 @@
         rTratos.textContent = r.tr;
         rTratoMoney.textContent = money(r.trMoney);
         rTotalAdicional.textContent = money(r.heMoney + r.trMoney);
+        const baseEstimado = Number(db.config.sueldo) || 0;
+        rSueldoTotal.textContent = money(Math.round(baseEstimado + r.heMoney + r.trMoney));
+        rSueldoDesglose.textContent = "Base " + money(baseEstimado) + " + HE " + money(Math.round(r.heMoney)) + " + tratos " + money(Math.round(r.trMoney));
         rComp.textContent = c.available;
         rProgTxt.textContent = `${c.progress} / ${c.n} días`;
         rProg.style.width = (c.progress / c.n) * 100 + "%";
@@ -2230,7 +2240,7 @@
           v = vistaHist.value,
           r = summary(m, v);
         hPeriodo.textContent = periodLabel(m, v);
-        hResumen.innerHTML = `<div class="grid"><div class="stat heStat"><small>HE</small><b>${fmtMin(r.he)}</b><span class="subvalue heValue">${money(r.heMoney)}</span></div><div class="stat tratoStat"><small>Tratos</small><b>${r.tr}</b><span class="subvalue tratoValue">${money(r.trMoney)}</span></div><div class="stat totalStat"><small>Total adicional</small><b class="money">${money(r.heMoney + r.trMoney)}</b></div><div class="stat"><small>Aportes ahorro</small><b class="money">${money(r.aportes)}</b></div></div><p class="note">Retiros de ahorro: ${money(r.retiros)}</p>`;
+        hResumen.innerHTML = `<div class="grid"><div class="stat heStat"><small>HE</small><b>${fmtMin(r.he)}</b><span class="subvalue heValue">${money(r.heMoney)}</span></div><div class="stat tratoStat"><small>Tratos</small><b>${r.tr}</b><span class="subvalue tratoValue">${money(r.trMoney)}</span></div><div class="stat totalStat"><small>Total adicional</small><b class="money">${money(r.heMoney + r.trMoney)}</b></div><div class="stat"><small>Aportes ahorro</small><b class="money">${money(r.aportes)}</b></div></div><div class="stat totalStat" style="margin-top:12px"><small>Total estimado del período</small><b class="money" style="font-size:24px">${money(Math.round((Number(db.config.sueldo)||0)+r.heMoney+r.trMoney))}</b><span class="subvalue">Sueldo base ${money(Number(db.config.sueldo)||0)} + HE ${money(Math.round(r.heMoney))} + tratos ${money(Math.round(r.trMoney))}</span><p class="note" style="margin:6px 0 0">Estimación antes de descuentos; no es sueldo líquido.</p></div><p class="note">Retiros de ahorro: ${money(r.retiros)}</p>`;
       }
       function loadCfg() {
         let c = db.config;
@@ -2559,7 +2569,7 @@
       render();
       if ("serviceWorker" in navigator)
         navigator.serviceWorker
-          .register("sw.js?v=turno-plus-10")
+          .register("sw.js?v=turno-plus-11")
           .then((reg) => reg.update())
           .catch(() => {});
     </script>
