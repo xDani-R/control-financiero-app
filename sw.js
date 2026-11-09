@@ -1,4 +1,4 @@
-const CACHE='mi-control-v4-mobile-3';
+const CACHE='mi-control-v4-mobile-4';
 const ASSETS=['./','./index.html','./manifest.webmanifest'];
 self.addEventListener('install',event=>{
   self.skipWaiting();
