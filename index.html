@@ -1345,13 +1345,13 @@
             class="moneyInput"
             type="text"
             inputmode="numeric"
-          /><label>Valor trato</label
+          /><label>Valor trato (solo fuera de tabla)</label
           ><input
             id="cfgTrato"
             class="moneyInput"
             type="text"
             inputmode="numeric"
-          /><h2 style="margin-top:20px">Proyección de sueldo líquido</h2><p class="note">Valores personales según tu contrato o última liquidación. El porcentaje de descuentos es aproximado y no equivale a un cálculo legal exacto.</p><label>Gratificación mensual estimada</label><input id="cfgGratificacion" class="moneyInput" type="text" inputmode="numeric" /><label>Colación y movilización (total)</label><input id="cfgAsignaciones" class="moneyInput" type="text" inputmode="numeric" /><label>Descuentos legales aproximados (% del imponible)</label><input id="cfgTasaDescuentos" type="number" min="0" max="50" step="0.01" /><label>Anticipo del período</label><input id="cfgAnticipo" class="moneyInput" type="text" inputmode="numeric" /><label>Día de cierre de remuneraciones</label
+          /><p class="note">Bono trato automático según sueldo base y tramos Fabrinox. Bajo $500.000 se usa valor manual porque no existe tramo publicado.</p><h2 style="margin-top:20px">Proyección de sueldo líquido</h2><p class="note">Valores personales según tu contrato o última liquidación. El porcentaje de descuentos es aproximado y no equivale a un cálculo legal exacto.</p><label>Gratificación mensual estimada</label><input id="cfgGratificacion" class="moneyInput" type="text" inputmode="numeric" /><label>Colación y movilización (total)</label><input id="cfgAsignaciones" class="moneyInput" type="text" inputmode="numeric" /><label>Descuentos legales aproximados (% del imponible)</label><input id="cfgTasaDescuentos" type="number" min="0" max="50" step="0.01" /><label>Anticipo del período</label><input id="cfgAnticipo" class="moneyInput" type="text" inputmode="numeric" /><label>Día de cierre de remuneraciones</label
           ><input id="cfgCierre" type="number" min="1" max="28" value="23" />
           <p class="note">
             El cierre incluye ese día. Las jornadas posteriores pasan al período
@@ -1638,6 +1638,18 @@
           .filter((x) => x.bolsilloId === id)
           .reduce((a, x) => a + (x.tipo === "aporte" ? x.monto : -x.monto), 0);
       }
+      function bonoTratoAutomatico(sueldo) {
+        const n = Number(sueldo) || 0;
+        if (n < 500000) return null;
+        if (n < 600000) return 68000;
+        if (n < 700000) return 88000;
+        if (n < 800000) return 95000;
+        if (n < 1000000) return 117000;
+        if (n < 1200000) return 125000;
+        if (n < 1400000) return 141000;
+        if (n < 1700000) return 165000;
+        return 185000;
+      }
       function summary(m, v = "calendario") {
         let he = 0,
           tr = 0;
@@ -1662,7 +1674,7 @@
           aportes,
           retiros,
           heMoney: (he / 60) * db.config.valorHE,
-          trMoney: tr * db.config.trato,
+          trMoney: tr * (bonoTratoAutomatico(db.config.sueldo) ?? (Number(db.config.trato)||0)),
         };
       }
       function save(msg) {
@@ -2264,7 +2276,8 @@
         cfgSueldo.value = fmtCLP(c.sueldo);
         cfgHoras.value = c.horas;
         cfgValorHE.value = fmtCLP(c.valorHE);
-        cfgTrato.value = fmtCLP(c.trato);
+        cfgTrato.value = fmtCLP(bonoTratoAutomatico(c.sueldo) ?? c.trato);
+        cfgTrato.disabled = bonoTratoAutomatico(c.sueldo) !== null;
         cfgGratificacion.value = fmtCLP(c.gratificacion);
         cfgAsignaciones.value = fmtCLP(c.asignaciones);
         cfgTasaDescuentos.value = c.tasaDescuentos;
@@ -2671,7 +2684,7 @@
       render();
       if ("serviceWorker" in navigator)
         navigator.serviceWorker
-          .register("sw.js?v=turno-plus-12")
+          .register("sw.js?v=turno-plus-13")
           .then((reg) => reg.update())
           .catch(() => {});
     </script>
