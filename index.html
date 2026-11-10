@@ -12,6 +12,7 @@
     <style>
       /* Interfaz enfocada en jornadas y remuneración. Se conservan datos y nodos históricos. */
       .tabs button[data-p="comp"], .tabs button[data-p="finanzas"], #inicio > .card:nth-child(n+2), #inicio .grid > .stat:last-child { display:none !important; }
+      .periodSwitch, #rPeriodo, #inicio .sectionTitle input { display:none !important; }
       :root {
         --bg: #f4f6f8;
         --card: #fff;
@@ -1089,7 +1090,7 @@
       <section id="inicio" class="page active">
         <div class="card">
           <div class="sectionTitle">
-            <h2>Mi resumen del mes</h2>
+            <h2 id="tituloPago">Mi pago de este mes</h2>
             <input
               id="mesResumen"
               type="month"
@@ -1615,7 +1616,7 @@
       const month = (a, m) => a.filter((x) => x.fecha?.slice(0, 7) === m);
       function periodoPago(m) {
         let [y, mo] = m.split("-").map(Number),
-          d = Number(db.config.diaCierre) || 23;
+          d = 22;
         let end = `${y}-${pad(mo)}-${pad(d)}`,
           p = new Date(y, mo - 2, 1);
         return {
@@ -1695,9 +1696,10 @@
       }
       function render() {
         let m = mesResumen.value || monthNow(),
-          v = vistaResumen.value,
+          v = "pago",
           r = summary(m, v),
           c = compStats();
+        tituloPago.textContent = "Pago de " + new Date(m + "-01T12:00").toLocaleDateString("es-CL",{month:"long",year:"numeric"});
         rPeriodo.textContent = periodLabel(m, v);
         rHE.textContent = fmtMin(r.he);
         rHEMoney.textContent = money(r.heMoney);
@@ -2268,7 +2270,7 @@
       }
       function renderHist() {
         let m = hMes.value || monthNow(),
-          v = vistaHist.value,
+          v = "pago",
           r = summary(m, v);
         hPeriodo.textContent = periodLabel(m, v);
         hResumen.innerHTML = `<div class="grid"><div class="stat heStat"><small>HE</small><b>${fmtMin(r.he)}</b><span class="subvalue heValue">${money(r.heMoney)}</span></div><div class="stat tratoStat"><small>Tratos</small><b>${r.tr}</b><span class="subvalue tratoValue">${money(r.trMoney)}</span></div><div class="stat totalStat"><small>Total adicional</small><b class="money">${money(r.heMoney + r.trMoney)}</b></div><div class="stat"><small>Aportes ahorro</small><b class="money">${money(r.aportes)}</b></div></div><div class="stat totalStat" style="margin-top:12px"><small>Total estimado del período</small><b class="money" style="font-size:24px">${money(Math.round((Number(db.config.sueldo)||0)+r.heMoney+r.trMoney))}</b><span class="subvalue">Sueldo base ${money(Number(db.config.sueldo)||0)} + HE ${money(Math.round(r.heMoney))} + tratos ${money(Math.round(r.trMoney))}</span><p class="note" style="margin:6px 0 0">Estimación antes de descuentos; no es sueldo líquido.</p></div><p class="note">Retiros de ahorro: ${money(r.retiros)}</p>`;
@@ -2284,7 +2286,7 @@
         cfgGratificacion.value = fmtCLP(c.gratificacion);
         cfgAsignaciones.value = fmtCLP(c.asignaciones);
         cfgAnticipo.value = fmtCLP(c.anticipo);
-        cfgCierre.value = c.diaCierre || 23;
+        cfgCierre.value = 22;
         cfgDiasComp.value = c.diasComp;
         for (let i = 1; i <= 6; i++)
           document.getElementById("h" + i).value = c.horarios[i] || "";
@@ -2306,7 +2308,7 @@
           horas: Number(cfgHoras.value) || 42,
           valorHE: parseCLP(cfgValorHE.value),
           trato: parseCLP(cfgTrato.value),
-          diaCierre: cierre,
+          diaCierre: 22,
           diasComp: n,
           horarios: {
             1: h1.value,
@@ -2673,7 +2675,9 @@
         .forEach((b) => (b.onclick = () => navegar(b.dataset.p)));
       document.getElementById("abrirAjustes").onclick = () => navegar("config");
       document.querySelectorAll(".moneyInput").forEach(bindMoney);
-      mesResumen.value = hMes.value = monthNow();
+      const hoy = new Date();
+      const mesPago = new Date(hoy.getFullYear(), hoy.getMonth() + (hoy.getDate() > 22 ? 1 : 0), 1);
+      mesResumen.value = hMes.value = `${mesPago.getFullYear()}-${pad(mesPago.getMonth()+1)}`;
       jFecha.value = localDate();
       movBFecha.value = localDate();
       mesResumen.onchange = render;
@@ -2683,7 +2687,7 @@
       render();
       if ("serviceWorker" in navigator)
         navigator.serviceWorker
-          .register("sw.js?v=turno-plus-15")
+          .register("sw.js?v=turno-plus-16")
           .then((reg) => reg.update())
           .catch(() => {});
     </script>
