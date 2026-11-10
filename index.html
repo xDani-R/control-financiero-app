@@ -12,7 +12,7 @@
     <style>
       /* Interfaz enfocada en jornadas y remuneración. Se conservan datos y nodos históricos. */
       .tabs button[data-p="comp"], .tabs button[data-p="finanzas"], #inicio > .card:nth-child(n+2), #inicio .grid > .stat:last-child { display:none !important; }
-      .periodSwitch, #rPeriodo, #inicio .sectionTitle input { display:none !important; }
+      #comp, #finanzas { display:none !important; }
       :root {
         --bg: #f4f6f8;
         --card: #fff;
@@ -1091,20 +1091,10 @@
         <div class="card">
           <div class="sectionTitle">
             <h2 id="tituloPago">Mi pago de este mes</h2>
-            <input
-              id="mesResumen"
-              type="month"
-              style="width: auto; padding: 8px"
-            />
+            <input id="mesResumen" type="hidden" />
           </div>
-          <div class="periodSwitch">
-            <label for="vistaResumen">Mostrar</label
-            ><select id="vistaResumen" onchange="render()">
-              <option value="pago">Período de pago</option>
-              <option value="calendario">Mes calendario</option>
-            </select>
-          </div>
-          <p class="note" id="rPeriodo"></p>
+          <input id="vistaResumen" type="hidden" value="pago" />
+          <span id="rPeriodo" hidden></span>
           <div class="stat totalStat" style="margin-bottom:12px;padding:18px">
             <small>Líquido estimado a recibir</small>
             <b class="money" id="rSueldoTotal" style="font-size:27px">$0</b>
@@ -2509,6 +2499,7 @@
         }
       }
       function navegar(p) {
+        if (!["inicio","jornadas","historial","config"].includes(p)) return;
         document
           .querySelectorAll("#tabs button,.page")
           .forEach((x) => x.classList.remove("active"));
@@ -2517,13 +2508,7 @@
         document.getElementById(p).classList.add("active");
         window.scrollTo({ top: 0, behavior: "instant" });
       }
-      const swipePages = [
-        "inicio",
-        "jornadas",
-        "comp",
-        "finanzas",
-        "historial",
-      ];
+      const swipePages = ["inicio", "jornadas", "historial"];
       const swipeArea = document.querySelector("main.wrap");
       let swipeStart = null,
         swipeAnimating = false;
@@ -2715,7 +2700,7 @@
       render();
       if ("serviceWorker" in navigator)
         navigator.serviceWorker
-          .register("sw.js?v=turno-plus-18")
+          .register("sw.js?v=turno-plus-19")
           .then((reg) => reg.update())
           .catch(() => {});
     </script>
