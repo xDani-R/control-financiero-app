@@ -1385,7 +1385,7 @@
           <p class="note">Sin correo ni contraseña. Los datos siguen guardados en este dispositivo. Para cambiar de celular, conserva también un respaldo JSON.</p>
           <p id="cloudStatus" class="note" role="status">Preparando conexión…</p>
           <div class="actions">
-            <button class="primary" type="button" onclick="subirRespaldoNube()">Guardar respaldo en Supabase</button>
+            <button class="primary" type="button" onclick="subirRespaldoNube()">Guardar respaldo en Supabase</button><button class="secondary" id="cloudAutoBtn" type="button" onclick="toggleAutoBackup()">Activar respaldo automático</button>
             <button class="secondary" type="button" onclick="restaurarRespaldoNube()">Consultar y restaurar respaldo</button>
           </div>
           <p class="note">La restauración requiere confirmación y primero descarga una copia de tus datos actuales. Una sesión anónima no se puede recuperar en otro dispositivo sin un método adicional.</p>
@@ -1553,12 +1553,74 @@
       let db = migrate();
       function persist() {
         localStorage.setItem(K, JSON.stringify(db));
+        queueAutoBackup();
       }
 
       // Respaldo explícito: nunca sobrescribe datos locales sin confirmación.
       const CLOUD_URL = "https://vtfgbrqpakvcsoxybpiy.supabase.co";
       const CLOUD_KEY = "sb_publishable_hkaHo1W3TVYpe28JlLF2bw_eKS_ebqc";
       let cloudClient = null, cloudBusy = false;
+      const AUTO_KEY = "turnop-auto-backup-v1";
+      let autoTimer = null, autoBusy = false, lastCloudSnapshot = null;
+      function autoEnabled() { return localStorage.getItem(AUTO_KEY) === "on"; }
+      function autoLabel() {
+        const b = document.getElementById("cloudAutoBtn");
+        if (b) b.textContent = autoEnabled() ? "Desactivar respaldo automático" : "Activar respaldo automático";
+      }
+      function queueAutoBackup() {
+        if (!autoEnabled()) return;
+        clearTimeout(autoTimer);
+        autoTimer = setTimeout(autoBackup, 4000);
+      }
+      async function toggleAutoBackup() {
+        if (autoEnabled()) {
+          localStorage.removeItem(AUTO_KEY); clearTimeout(autoTimer); autoLabel();
+          estadoNube("Respaldo automático desactivado."); return;
+        }
+        if (cloudBusy || autoBusy) return;
+        autoBusy = true;
+        try {
+          const id = await sesionNube();
+          const { data, error } = await cloudClient.from("turno_backups").select("datos").eq("user_id", id).maybeSingle();
+          if (error) throw error;
+          if (!data || JSON.stringify(data.datos) !== JSON.stringify(db))
+            throw new Error("Primero guarda un respaldo manual actualizado desde este dispositivo.");
+          lastCloudSnapshot = JSON.stringify(data.datos);
+          localStorage.setItem(AUTO_KEY, "on"); autoLabel();
+          estadoNube("Respaldo automático activado.");
+        } catch(e) { estadoNube("No se pudo activar: " + e.message); }
+        finally { autoBusy = false; }
+      }
+      async function autoBackup() {
+        if (!autoEnabled() || !navigator.onLine || cloudBusy || autoBusy) return;
+        autoBusy = true;
+        const snapshot = JSON.stringify(db);
+        try {
+          const id = await sesionNube();
+          const { data, error } = await cloudClient.from("turno_backups").select("datos").eq("user_id", id).maybeSingle();
+          if (error) throw error;
+          if (!data || !lastCloudSnapshot || JSON.stringify(data.datos) !== lastCloudSnapshot) {
+            localStorage.removeItem(AUTO_KEY); autoLabel();
+            throw new Error("Respaldo remoto diferente: sincronización detenida para evitar pérdida de datos.");
+          }
+          if (snapshot !== JSON.stringify(db) || !autoEnabled()) return;
+          const copy = JSON.parse(snapshot);
+          if (!copy.jornadas.length && data.datos.jornadas?.length) {
+            localStorage.removeItem(AUTO_KEY); autoLabel();
+            throw new Error("Se impidió sobrescribir las jornadas con una lista vacía.");
+          }
+          const { error: saveError } = await cloudClient.from("turno_backups").update({
+            datos: copy, actualizado_en: new Date().toISOString()
+          }).eq("user_id", id);
+          if (saveError) throw saveError;
+          lastCloudSnapshot = snapshot;
+          estadoNube("Respaldo automático actualizado: " + new Date().toLocaleString("es-CL"));
+        } catch(e) { estadoNube("Respaldo pendiente: " + e.message); }
+        finally {
+          autoBusy = false;
+          if (autoEnabled() && snapshot !== JSON.stringify(db)) queueAutoBackup();
+        }
+      }
       function estadoNube(m) {
         const el = document.getElementById("cloudStatus");
         if (el) el.textContent = m;
@@ -1591,6 +1653,7 @@
             { onConflict: "user_id" }
           );
           if (error) throw error;
+          lastCloudSnapshot = JSON.stringify(copia);
           estadoNube("Respaldo guardado en Supabase: " + new Date().toLocaleString("es-CL"));
           toast("Respaldo en la nube guardado");
         } catch (e) {
@@ -1617,6 +1680,7 @@
           if (!ok) { estadoNube("Restauración cancelada; tus datos siguen intactos."); return; }
           exportJSON();
           db = normalize(remoto);
+          lastCloudSnapshot = JSON.stringify(remoto);
           save("Respaldo de Supabase restaurado");
           estadoNube("Respaldo restaurado correctamente.");
         } catch (e) {
@@ -2597,6 +2661,7 @@
           localStorage.removeItem(OLD);
           db = clone(defaults);
           db.v4Migrated = true;
+          localStorage.removeItem(AUTO_KEY); clearTimeout(autoTimer); autoLabel();
           save("Datos borrados");
         }
       }
@@ -2798,11 +2863,13 @@
       mesResumen.onchange = render;
       hMes.onchange = renderHist;
       toggleJ();
+      autoLabel();
+      window.addEventListener("online", queueAutoBackup);
       persist();
       render();
       if ("serviceWorker" in navigator)
         navigator.serviceWorker
-          .register("sw.js?v=turno-plus-22")
+          .register("sw.js?v=turno-plus-23")
           .then((reg) => reg.update())
           .catch(() => {});
     </script>
