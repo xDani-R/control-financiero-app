@@ -1560,6 +1560,11 @@
       const CLOUD_URL = "https://vtfgbrqpakvcsoxybpiy.supabase.co";
       const CLOUD_KEY = "sb_publishable_hkaHo1W3TVYpe28JlLF2bw_eKS_ebqc";
       let cloudClient = null, cloudBusy = false;
+      function cloudStable(x) {
+        if (Array.isArray(x)) return "[" + x.map(cloudStable).join(",") + "]";
+        if (x && typeof x === "object") return "{" + Object.keys(x).sort().map(k => JSON.stringify(k) + ":" + cloudStable(x[k])).join(",") + "}";
+        return JSON.stringify(x);
+      }
       const AUTO_KEY = "turnop-auto-backup-v1";
       let autoTimer = null, autoBusy = false, lastCloudSnapshot = null;
       function autoEnabled() { return localStorage.getItem(AUTO_KEY) === "on"; }
@@ -1583,9 +1588,9 @@
           const id = await sesionNube();
           const { data, error } = await cloudClient.from("turno_backups").select("datos").eq("user_id", id).maybeSingle();
           if (error) throw error;
-          if (!data || JSON.stringify(data.datos) !== JSON.stringify(db))
+          if (!data || cloudStable(data.datos) !== cloudStable(db))
             throw new Error("Primero guarda un respaldo manual actualizado desde este dispositivo.");
-          lastCloudSnapshot = JSON.stringify(data.datos);
+          lastCloudSnapshot = cloudStable(data.datos);
           localStorage.setItem(AUTO_KEY, "on"); autoLabel();
           estadoNube("Respaldo automático activado.");
         } catch(e) { estadoNube("No se pudo activar: " + e.message); }
@@ -1594,17 +1599,17 @@
       async function autoBackup() {
         if (!autoEnabled() || !navigator.onLine || cloudBusy || autoBusy) return;
         autoBusy = true;
-        const snapshot = JSON.stringify(db);
+        const snapshot = cloudStable(db);
         try {
           const id = await sesionNube();
           const { data, error } = await cloudClient.from("turno_backups").select("datos").eq("user_id", id).maybeSingle();
           if (error) throw error;
-          if (!data || !lastCloudSnapshot || JSON.stringify(data.datos) !== lastCloudSnapshot) {
+          if (!data || !lastCloudSnapshot || cloudStable(data.datos) !== lastCloudSnapshot) {
             localStorage.removeItem(AUTO_KEY); autoLabel();
             throw new Error("Respaldo remoto diferente: sincronización detenida para evitar pérdida de datos.");
           }
-          if (snapshot !== JSON.stringify(db) || !autoEnabled()) return;
-          const copy = JSON.parse(snapshot);
+          if (snapshot !== cloudStable(db) || !autoEnabled()) return;
+          const copy = clone(db);
           if (!copy.jornadas.length && data.datos.jornadas?.length) {
             localStorage.removeItem(AUTO_KEY); autoLabel();
             throw new Error("Se impidió sobrescribir las jornadas con una lista vacía.");
@@ -1618,7 +1623,7 @@
         } catch(e) { estadoNube("Respaldo pendiente: " + e.message); }
         finally {
           autoBusy = false;
-          if (autoEnabled() && snapshot !== JSON.stringify(db)) queueAutoBackup();
+          if (autoEnabled() && snapshot !== cloudStable(db)) queueAutoBackup();
         }
       }
       function estadoNube(m) {
@@ -1653,7 +1658,7 @@
             { onConflict: "user_id" }
           );
           if (error) throw error;
-          lastCloudSnapshot = JSON.stringify(copia);
+          lastCloudSnapshot = cloudStable(copia);
           estadoNube("Respaldo guardado en Supabase: " + new Date().toLocaleString("es-CL"));
           toast("Respaldo en la nube guardado");
         } catch (e) {
@@ -1680,7 +1685,7 @@
           if (!ok) { estadoNube("Restauración cancelada; tus datos siguen intactos."); return; }
           exportJSON();
           db = normalize(remoto);
-          lastCloudSnapshot = JSON.stringify(remoto);
+          lastCloudSnapshot = cloudStable(remoto);
           save("Respaldo de Supabase restaurado");
           estadoNube("Respaldo restaurado correctamente.");
         } catch (e) {
