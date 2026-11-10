@@ -1380,16 +1380,6 @@
             </button>
           </div>
         </div>
-        <div class="card" id="cloudCard">
-          <h2>Respaldo en la nube</h2>
-          <p class="note">Sin correo ni contraseña. Los datos siguen guardados en este dispositivo. Para cambiar de celular, conserva también un respaldo JSON.</p>
-          <p id="cloudStatus" class="note" role="status">Preparando conexión…</p>
-          <div class="actions">
-            <button class="primary" type="button" onclick="subirRespaldoNube()">Guardar respaldo en Supabase</button><button class="secondary" id="cloudAutoBtn" type="button" onclick="toggleAutoBackup()">Activar respaldo automático</button>
-            <button class="secondary" type="button" onclick="restaurarRespaldoNube()">Consultar y restaurar respaldo</button>
-          </div>
-          <p class="note">La restauración requiere confirmación y primero descarga una copia de tus datos actuales. Una sesión anónima no se puede recuperar en otro dispositivo sin un método adicional.</p>
-        </div>
         <div class="card">
           <h2>Zona de peligro</h2>
           <button class="danger" style="width: 100%" onclick="borrarTodo()">
@@ -1567,7 +1557,7 @@
       }
       const AUTO_KEY = "turnop-auto-backup-v1";
       let autoTimer = null, autoBusy = false, lastCloudSnapshot = null;
-      function autoEnabled() { return localStorage.getItem(AUTO_KEY) === "on"; }
+      function autoEnabled() { return localStorage.getItem(AUTO_KEY) !== "off"; }
       function autoLabel() {
         const b = document.getElementById("cloudAutoBtn");
         if (b) b.textContent = autoEnabled() ? "Desactivar respaldo automático" : "Activar respaldo automático";
@@ -1579,7 +1569,7 @@
       }
       async function toggleAutoBackup() {
         if (autoEnabled()) {
-          localStorage.removeItem(AUTO_KEY); clearTimeout(autoTimer); autoLabel();
+          localStorage.setItem(AUTO_KEY, "off"); clearTimeout(autoTimer); autoLabel();
           estadoNube("Respaldo automático desactivado."); return;
         }
         if (cloudBusy || autoBusy) return;
@@ -1604,14 +1594,32 @@
           const id = await sesionNube();
           const { data, error } = await cloudClient.from("turno_backups").select("datos").eq("user_id", id).maybeSingle();
           if (error) throw error;
-          if (!data || !lastCloudSnapshot || cloudStable(data.datos) !== lastCloudSnapshot) {
-            localStorage.removeItem(AUTO_KEY); autoLabel();
+          if (!data) {
+            if (lastCloudSnapshot) throw new Error("El respaldo remoto desapareció; sincronización detenida.");
+            if (snapshot !== cloudStable(db) || !autoEnabled()) return;
+            const { error: insertError } = await cloudClient.from("turno_backups").insert({
+              user_id: id, datos: clone(db), actualizado_en: new Date().toISOString()
+            });
+            if (insertError) throw insertError;
+            lastCloudSnapshot = snapshot;
+            return;
+          }
+          if (!lastCloudSnapshot) {
+            if (cloudStable(data.datos) === snapshot) {
+              lastCloudSnapshot = snapshot;
+              return;
+            }
+            localStorage.setItem(AUTO_KEY, "off");
+            throw new Error("El respaldo remoto y el local son diferentes; no se sobrescribirá ninguno.");
+          }
+          if (cloudStable(data.datos) !== lastCloudSnapshot) {
+            localStorage.setItem(AUTO_KEY, "off"); autoLabel();
             throw new Error("Respaldo remoto diferente: sincronización detenida para evitar pérdida de datos.");
           }
           if (snapshot !== cloudStable(db) || !autoEnabled()) return;
           const copy = clone(db);
           if (!copy.jornadas.length && data.datos.jornadas?.length) {
-            localStorage.removeItem(AUTO_KEY); autoLabel();
+            localStorage.setItem(AUTO_KEY, "off"); autoLabel();
             throw new Error("Se impidió sobrescribir las jornadas con una lista vacía.");
           }
           const { error: saveError } = await cloudClient.from("turno_backups").update({
@@ -2874,7 +2882,7 @@
       render();
       if ("serviceWorker" in navigator)
         navigator.serviceWorker
-          .register("sw.js?v=turno-plus-23")
+          .register("sw.js?v=turno-plus-24")
           .then((reg) => reg.update())
           .catch(() => {});
     </script>
