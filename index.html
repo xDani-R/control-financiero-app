@@ -1572,20 +1572,42 @@
         const a=y%19,b=Math.floor(y/100),c=y%100,d=Math.floor(b/4),e=b%4,f=Math.floor((b+8)/25),g=Math.floor((b-f+1)/3),h=(19*a+b-d-g+15)%30,i=Math.floor(c/4),k=c%4,l=(32+2*e+2*i-h-k+7)%7,m=Math.floor((a+11*h+22*l)/451),n=h+l-7*m+114;
         return new Date(y,Math.floor(n/31)-1,n%31+1);
       }
+      // Feriados nacionales de Chile. No incluye feriados regionales ni extraordinarios.
       function feriadoChile(fecha) {
-        if (!/^\d{4}-\d{2}-\d{2}$/.test(fecha||"")) return "";
-        const [y,mo,da]=fecha.split("-").map(Number),d=new Date(y,mo-1,da);
-        if(d.getFullYear()!==y||d.getMonth()!==mo-1||d.getDate()!==da)return "";
-        const md=fecha.slice(5);
-        const fijos={"01-01":"Año Nuevo","05-01":"Día del Trabajador","05-21":"Glorias Navales","06-20":"Día Nacional de los Pueblos Indígenas (fecha variable)","07-16":"Virgen del Carmen","08-15":"Asunción de la Virgen","09-18":"Independencia Nacional","09-19":"Glorias del Ejército","10-31":"Día de las Iglesias Evangélicas","11-01":"Todos los Santos","12-08":"Inmaculada Concepción","12-25":"Navidad"};
-        delete fijos["06-20"];
-        if(fijos[md])return fijos[md];
-        const easter=pascua(y), delta=Math.round((d-easter)/86400000);
-        if(delta===-2)return "Viernes Santo";if(delta===-1)return "Sábado Santo";
-        const monday=(month,day)=>{const x=new Date(y,month-1,day);return new Date(y,month-1,day+(8-x.getDay())%7)};
-        const match=x=>x.getFullYear()===y&&x.getMonth()===mo-1&&x.getDate()===da;
-        if(match(monday(6,29)))return "San Pedro y San Pablo";
-        if(match(monday(10,12)))return "Encuentro de Dos Mundos";
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(fecha || "")) return "";
+        const [y, mo, da] = fecha.split("-").map(Number);
+        const d = new Date(y, mo - 1, da);
+        if (d.getFullYear() !== y || d.getMonth() !== mo - 1 || d.getDate() !== da) return "";
+        const md = fecha.slice(5);
+        const fixed = {
+          "01-01":"Año Nuevo", "05-01":"Día del Trabajo",
+          "05-21":"Glorias Navales", "07-16":"Virgen del Carmen",
+          "08-15":"Asunción de la Virgen", "09-18":"Independencia Nacional",
+          "09-19":"Glorias del Ejército", "11-01":"Todos los Santos",
+          "12-08":"Inmaculada Concepción", "12-25":"Navidad"
+        };
+        if (fixed[md]) return fixed[md];
+        const easter = pascua(y);
+        const iso = x => x.getFullYear()+"-"+String(x.getMonth()+1).padStart(2,"0")+"-"+String(x.getDate()).padStart(2,"0");
+        const shift = (x, n) => new Date(x.getFullYear(), x.getMonth(), x.getDate()+n);
+        if (fecha === iso(shift(easter,-2))) return "Viernes Santo";
+        if (fecha === iso(shift(easter,-1))) return "Sábado Santo";
+        // Ley 19.668: martes a jueves -> lunes anterior; viernes -> lunes siguiente.
+        const movedMonday = (month, day) => {
+          const x = new Date(y, month-1, day), dow = x.getDay();
+          return shift(x, dow >= 2 && dow <= 4 ? 1-dow : dow === 5 ? 3 : 0);
+        };
+        if (fecha === iso(movedMonday(6,29))) return "San Pedro y San Pablo";
+        if (fecha === iso(movedMonday(10,12))) return "Encuentro de Dos Mundos";
+        // Ley 20.299: martes -> viernes anterior; miércoles -> viernes siguiente.
+        const evangelical = new Date(y,9,31), dow = evangelical.getDay();
+        const evDate = shift(evangelical, dow === 2 ? -4 : dow === 3 ? 2 : 0);
+        if (fecha === iso(evDate)) return "Día de las Iglesias Evangélicas";
+        // Ley 21.357: solsticio de invierno; fechas verificadas para 2026-2028.
+        const solsticio = {2026:"06-21",2027:"06-21",2028:"06-20"};
+        if (md === solsticio[y]) return "Día Nacional de los Pueblos Indígenas";
+        // Ley 20.983: 17 de septiembre cuando el 18 es sábado.
+        if (md === "09-17" && new Date(y,8,18).getDay() === 6) return "Feriado adicional de Fiestas Patrias";
         return "";
       }
       function tipoAutomatico(fecha){return new Date(fecha+"T12:00").getDay()===0||!!feriadoChile(fecha)?"festivo":"normal";}
@@ -2700,7 +2722,7 @@
       render();
       if ("serviceWorker" in navigator)
         navigator.serviceWorker
-          .register("sw.js?v=turno-plus-20")
+          .register("sw.js?v=turno-plus-21")
           .then((reg) => reg.update())
           .catch(() => {});
     </script>
