@@ -1184,12 +1184,10 @@
               </div>
             </div>
           </div>
-          <label>Tipo de día</label
-          ><select id="jTipo" onchange="toggleJ()">
+          <p class="note" id="jTipoDetectado" aria-live="polite">Tipo de jornada automático</p><details style="margin:8px 0 12px"><summary style="cursor:pointer">Corregir tipo de día (solo excepciones)</summary><label>Tipo de día</label><select id="jTipo" onchange="toggleJ()">
             <option value="normal">Trabajé normalmente</option>
             <option value="festivo">Festivo / trato</option>
-            <option value="no_trabajado">No trabajé</option></select
-          ><label>Nota opcional</label
+            <option value="no_trabajado">No trabajé</option></select></details><label>Nota opcional</label
           ><input id="jNota" placeholder="Ej: Mercado Libre" /><button
             class="primary"
             id="jGuardar"
@@ -1581,11 +1579,39 @@
             })[c],
         );
       }
+      function pascua(y) {
+        const a=y%19,b=Math.floor(y/100),c=y%100,d=Math.floor(b/4),e=b%4,f=Math.floor((b+8)/25),g=Math.floor((b-f+1)/3),h=(19*a+b-d-g+15)%30,i=Math.floor(c/4),k=c%4,l=(32+2*e+2*i-h-k+7)%7,m=Math.floor((a+11*h+22*l)/451),n=h+l-7*m+114;
+        return new Date(y,Math.floor(n/31)-1,n%31+1);
+      }
+      function feriadoChile(fecha) {
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(fecha||"")) return "";
+        const [y,mo,da]=fecha.split("-").map(Number),d=new Date(y,mo-1,da);
+        if(d.getFullYear()!==y||d.getMonth()!==mo-1||d.getDate()!==da)return "";
+        const md=fecha.slice(5);
+        const fijos={"01-01":"Año Nuevo","05-01":"Día del Trabajador","05-21":"Glorias Navales","06-20":"Día Nacional de los Pueblos Indígenas (fecha variable)","07-16":"Virgen del Carmen","08-15":"Asunción de la Virgen","09-18":"Independencia Nacional","09-19":"Glorias del Ejército","10-31":"Día de las Iglesias Evangélicas (fecha variable)","11-01":"Todos los Santos","12-08":"Inmaculada Concepción","12-25":"Navidad"};
+        delete fijos["06-20"];delete fijos["10-31"];
+        if(fijos[md])return fijos[md];
+        const easter=pascua(y), delta=Math.round((d-easter)/86400000);
+        if(delta===-2)return "Viernes Santo";if(delta===-1)return "Sábado Santo";
+        const monday=(month,day)=>{const x=new Date(y,month-1,day);return new Date(y,month-1,day+(8-x.getDay())%7)};
+        const match=x=>x.getFullYear()===y&&x.getMonth()===mo-1&&x.getDate()===da;
+        if(match(monday(6,29)))return "San Pedro y San Pablo";
+        if(match(monday(10,12)))return "Encuentro de Dos Mundos";
+        if(match(monday(10,27)))return "Reforma Protestante (revisar fecha oficial)";
+        return "";
+      }
+      function tipoAutomatico(fecha){return new Date(fecha+"T12:00").getDay()===0||!!feriadoChile(fecha)?"festivo":"normal";}
+      function detectarTipoJ(){
+        const fecha=jFecha.value, nombre=feriadoChile(fecha), domingo=fecha&&new Date(fecha+"T12:00").getDay()===0;
+        jTipo.value=tipoAutomatico(fecha);
+        jTipoDetectado.textContent=nombre?"Feriado detectado: "+nombre+" · Bono trato si trabajaste":domingo?"Domingo · Bono trato si trabajaste":"Día normal · Se calculan horas extra";
+        toggleJ();
+      }
       function calcJ(j) {
         let d = new Date(j.fecha + "T12:00").getDay();
         if (j.tipo === "no_trabajado")
           return { he: 0, trato: false, trabajo: false };
-        if (j.tipo === "festivo" || d === 0)
+        if (j.tipo === "festivo" || d === 0 || !!feriadoChile(j.fecha))
           return { he: 0, trato: true, trabajo: true };
         let base = db.config.horarios[d];
         return {
@@ -2121,6 +2147,7 @@
         jId.value = j.id;
         jFecha.value = j.fecha;
         jTipo.value = j.tipo;
+        jTipoDetectado.textContent = feriadoChile(j.fecha) ? "Feriado detectado: "+feriadoChile(j.fecha) : new Date(j.fecha+"T12:00").getDay()===0 ? "Domingo · Trato" : "Día normal";
         jEntrada.value = j.entrada || "08:00";
         jSalida.value = j.salida || "";
         jNota.value = j.nota || "";
@@ -2135,6 +2162,7 @@
         jId.value = "";
         jFecha.value = localDate();
         jTipo.value = "normal";
+        detectarTipoJ();
         jEntrada.value = "08:00";
         jSalida.value = "";
         jNota.value = "";
@@ -2679,6 +2707,8 @@
       const mesPago = new Date(hoy.getFullYear(), hoy.getMonth() + (hoy.getDate() > 22 ? 1 : 0), 1);
       mesResumen.value = hMes.value = `${mesPago.getFullYear()}-${pad(mesPago.getMonth()+1)}`;
       jFecha.value = localDate();
+      jFecha.addEventListener("change",detectarTipoJ);
+      detectarTipoJ();
       movBFecha.value = localDate();
       mesResumen.onchange = render;
       hMes.onchange = renderHist;
@@ -2687,7 +2717,7 @@
       render();
       if ("serviceWorker" in navigator)
         navigator.serviceWorker
-          .register("sw.js?v=turno-plus-16")
+          .register("sw.js?v=turno-plus-17")
           .then((reg) => reg.update())
           .catch(() => {});
     </script>
