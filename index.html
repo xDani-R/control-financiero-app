@@ -10,6 +10,8 @@
     <link rel="manifest" href="manifest.webmanifest" />
     <title>Turno+ | Jornadas y horas extra</title>
     <style>
+      /* Interfaz enfocada en jornadas y remuneración. Se conservan datos y nodos históricos. */
+      .tabs button[data-p="comp"], .tabs button[data-p="finanzas"], #inicio > .card:nth-child(n+2), #inicio .grid > .stat:last-child { display:none !important; }
       :root {
         --bg: #f4f6f8;
         --card: #fff;
@@ -1087,7 +1089,7 @@
       <section id="inicio" class="page active">
         <div class="card">
           <div class="sectionTitle">
-            <h2>Resumen de remuneraciones</h2>
+            <h2>Mi resumen del mes</h2>
             <input
               id="mesResumen"
               type="month"
@@ -1105,10 +1107,11 @@
           <div class="stat totalStat" style="margin-bottom:12px;padding:18px">
             <small>Líquido estimado a recibir</small>
             <b class="money" id="rSueldoTotal" style="font-size:27px">$0</b>
-            <span class="subvalue">Proyección de pago después de descuentos</span>
-            <p class="note" id="rSueldoDesglose" style="margin:8px 0 0"></p>
+            <span class="subvalue">Sueldo base + horas extra + tratos, con descuentos estimados</span>
+            <details style="margin-top:10px"><summary style="cursor:pointer;font-weight:650">Ver cómo se calculó</summary><p class="note" id="rSueldoDesglose" style="margin:8px 0 0"></p></details>
             <p class="note" style="margin:4px 0 0">Estimación referencial; no reemplaza tu liquidación de sueldo.</p>
           </div>
+          <h3 style="margin:18px 0 10px;font-size:16px">Lo que llevas ganado en extras</h3>
           <div class="grid">
             <div class="stat heStat">
               <small>Horas extra</small><b id="rHE">0 h 00 min</b
@@ -1119,7 +1122,7 @@
               ><span class="subvalue tratoValue" id="rTratoMoney">$0</span>
             </div>
             <div class="stat totalStat">
-              <small>Total adicional</small
+              <small>Horas extra + tratos</small
               ><b class="money" id="rTotalAdicional">$0</b
               ><span class="subvalue money">HE + tratos</span>
             </div>
@@ -2680,7 +2683,7 @@
       render();
       if ("serviceWorker" in navigator)
         navigator.serviceWorker
-          .register("sw.js?v=turno-plus-14")
+          .register("sw.js?v=turno-plus-15")
           .then((reg) => reg.update())
           .catch(() => {});
     </script>
