@@ -1187,8 +1187,7 @@
           <p class="note" id="jTipoDetectado" aria-live="polite">Tipo de jornada automático</p><details style="margin:8px 0 12px"><summary style="cursor:pointer">Corregir tipo de día (solo excepciones)</summary><label>Tipo de día</label><select id="jTipo" onchange="toggleJ()">
             <option value="normal">Trabajé normalmente</option>
             <option value="festivo">Festivo / trato</option>
-            <option value="no_trabajado">No trabajé</option></select></details><label>Nota opcional</label
-          ><input id="jNota" placeholder="Ej: Mercado Libre" /><button
+            <option value="no_trabajado">No trabajé</option></select></details><input id="jNota" type="hidden" /><button
             class="primary"
             id="jGuardar"
             onclick="guardarJ()"
@@ -2040,7 +2039,7 @@
                     : (c.he / 60) * Number(db.config.valorHE),
                 ),
                 valorClass = c.trato ? "tratoValue" : c.he ? "heValue" : "";
-              return `<div class="item jornadaItem"><div class="top"><span>${fechaCL(j.fecha)}</span><span class="tag ${c.trato ? "trato" : c.he ? "he" : "ok"}">${label}</span></div><small>${j.tipo === "no_trabajado" ? "" : `${j.entrada || "--"} → ${j.salida || "--"}`} ${j.nota ? "· " + esc(j.nota) : ""}</small>${c.trato || c.he ? `<span class="jMoney ${valorClass}">${c.trato ? "Valor trato" : "HE estimadas"}: ${money(valor)}</span>` : ""}<div class="actions jornadaActions"><button class="secondary" onclick="editJ('${j.id}')">Editar</button><button class="danger" onclick="delJ('${j.id}')">Eliminar</button></div></div>`;
+              return `<div class="item jornadaItem"><div class="top"><span>${fechaCL(j.fecha)}</span><span class="tag ${c.trato ? "trato" : c.he ? "he" : "ok"}">${label}</span></div><small>${j.tipo === "no_trabajado" ? "" : `${j.entrada || "--"} → ${j.salida || "--"}`} </small>${c.trato || c.he ? `<span class="jMoney ${valorClass}">${c.trato ? "Valor trato" : "HE estimadas"}: ${money(valor)}</span>` : ""}<div class="actions jornadaActions"><button class="secondary" onclick="editJ('${j.id}')">Editar</button><button class="danger" onclick="delJ('${j.id}')">Eliminar</button></div></div>`;
             })
             .join("") || '<div class="empty">Aún no registras jornadas.</div>';
       }
@@ -2134,7 +2133,7 @@
           tipo: t,
           entrada: t === "no_trabajado" ? "" : e,
           salida: t === "no_trabajado" ? "" : s,
-          nota: jNota.value.trim(),
+          nota: id ? (db.jornadas.find(x => x.id === id)?.nota || "") : "",
         };
         if (id) db.jornadas = db.jornadas.map((x) => (x.id === id ? o : x));
         else db.jornadas.push(o);
@@ -2716,7 +2715,7 @@
       render();
       if ("serviceWorker" in navigator)
         navigator.serviceWorker
-          .register("sw.js?v=turno-plus-17")
+          .register("sw.js?v=turno-plus-18")
           .then((reg) => reg.update())
           .catch(() => {});
     </script>
