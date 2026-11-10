@@ -1588,8 +1588,8 @@
         const [y,mo,da]=fecha.split("-").map(Number),d=new Date(y,mo-1,da);
         if(d.getFullYear()!==y||d.getMonth()!==mo-1||d.getDate()!==da)return "";
         const md=fecha.slice(5);
-        const fijos={"01-01":"Año Nuevo","05-01":"Día del Trabajador","05-21":"Glorias Navales","06-20":"Día Nacional de los Pueblos Indígenas (fecha variable)","07-16":"Virgen del Carmen","08-15":"Asunción de la Virgen","09-18":"Independencia Nacional","09-19":"Glorias del Ejército","10-31":"Día de las Iglesias Evangélicas (fecha variable)","11-01":"Todos los Santos","12-08":"Inmaculada Concepción","12-25":"Navidad"};
-        delete fijos["06-20"];delete fijos["10-31"];
+        const fijos={"01-01":"Año Nuevo","05-01":"Día del Trabajador","05-21":"Glorias Navales","06-20":"Día Nacional de los Pueblos Indígenas (fecha variable)","07-16":"Virgen del Carmen","08-15":"Asunción de la Virgen","09-18":"Independencia Nacional","09-19":"Glorias del Ejército","10-31":"Día de las Iglesias Evangélicas","11-01":"Todos los Santos","12-08":"Inmaculada Concepción","12-25":"Navidad"};
+        delete fijos["06-20"];
         if(fijos[md])return fijos[md];
         const easter=pascua(y), delta=Math.round((d-easter)/86400000);
         if(delta===-2)return "Viernes Santo";if(delta===-1)return "Sábado Santo";
@@ -1597,7 +1597,6 @@
         const match=x=>x.getFullYear()===y&&x.getMonth()===mo-1&&x.getDate()===da;
         if(match(monday(6,29)))return "San Pedro y San Pablo";
         if(match(monday(10,12)))return "Encuentro de Dos Mundos";
-        if(match(monday(10,27)))return "Reforma Protestante (revisar fecha oficial)";
         return "";
       }
       function tipoAutomatico(fecha){return new Date(fecha+"T12:00").getDay()===0||!!feriadoChile(fecha)?"festivo":"normal";}
