@@ -1316,6 +1316,16 @@
           </button>
           <p class="note">¿Tienes registros de otro dispositivo? Puedes recuperarlos desde el archivo descargado para Excel, sin borrar tus datos actuales.</p>
           <button class="secondary" onclick="importCSVFile.click()">Importar jornadas desde Excel (.csv)</button>
+          <div class="card" style="margin-top:16px">
+            <h2>Respaldo opcional en nube</h2>
+            <p id="cloudConsentStatus" class="note"></p>
+            <p class="note">Puedes seguir usando Turno+ sin activar la nube. Los respaldos no tienen cifrado de extremo a extremo.</p>
+            <button type="button" class="secondary" onclick="subirRespaldoNube()">Guardar respaldo en nube</button>
+            <button type="button" class="secondary" onclick="restaurarRespaldoNube()">Recuperar registros de nube</button>
+            <button type="button" class="secondary" id="cloudAutoBtn" onclick="toggleAutoBackup()">Activar respaldo automático</button>
+            <button type="button" class="secondary" onclick="revokeCloudConsent()">Desactivar nube</button>
+            <p id="cloudStatus" class="note" role="status" aria-live="polite"></p>
+          </div>
           <input class="hidden" id="importCSVFile" type="file" accept=".csv,text/csv,text/plain" onchange="importarCSV(event)" />
         </div>
       </section>
@@ -1388,8 +1398,14 @@
         </div>
       </section>
     </main>
+    <section id="recoveryNotice" class="card" role="alert" hidden>
+      <h2>Tus datos necesitan revisión</h2>
+      <p>No pudimos leer tus registros. Conservamos el contenido original y pausamos los cambios y respaldos para protegerlo.</p>
+      <button type="button" id="downloadRecovery">Descargar datos para recuperar</button>
+      <p class="note">Guarda este archivo en un lugar privado. No lo compartas públicamente. Después de revisarlo, vuelve a abrir la aplicación; no borres el almacenamiento del navegador.</p>
+    </section>
     <div id="toast" class="toast"></div>
-    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+    <script src="backup-security.js"></script>
     <script>
       const K = "miControlV2",
         OLD = "miControlV1",
@@ -1504,7 +1520,7 @@
               );
             if (!b) {
               b = {
-                id: uid(),
+                id: "legacy-pocket-" + f.id.slice(0, 100),
                 nombre: name,
                 cuenta: account,
                 creado: f.fecha || localDate(),
@@ -1512,7 +1528,7 @@
               out.bolsillos.push(b);
             }
             out.movB.push({
-              id: uid(),
+              id: "legacy-movement-" + f.id.slice(0, 100),
               bolsilloId: b.id,
               fecha: f.fecha || localDate(),
               tipo: "aporte",
@@ -1525,25 +1541,83 @@
         }
         return out;
       }
+      let storageBlocked = false;
+      const recoverySources = {};
+      let expectedRaw = null;
+      function assertWritable() {
+        if (!storageBlocked) {
+          try {
+            if (localStorage.getItem(K) !== expectedRaw || localStorage.getItem(OLD) !== recoverySources[OLD]) {
+              recoverySources.changedCurrent = localStorage.getItem(K);
+              storageBlocked = true;
+            }
+          } catch { storageBlocked = true; }
+          if (storageBlocked) showRecovery();
+        }
+        if (storageBlocked) throw new Error("Los datos originales están protegidos. Descarga una copia para recuperarlos.");
+      }
       function migrate() {
-        let raw = localStorage.getItem(K) || localStorage.getItem(OLD);
-        if (!raw) {
-          let d = clone(defaults);
-          d.v4Migrated = true;
-          return d;
-        }
         try {
-          return normalize(JSON.parse(raw));
+          recoverySources[K] = localStorage.getItem(K);
+          recoverySources[OLD] = localStorage.getItem(OLD);
+          expectedRaw = recoverySources[K];
+          const raw = recoverySources[K] !== null ? recoverySources[K] : recoverySources[OLD];
+          if (raw !== null) return BackupSecurity.validate(normalize(BackupSecurity.parse(raw)));
         } catch {
-          let d = clone(defaults);
-          d.v4Migrated = true;
-          return d;
+          storageBlocked = true;
         }
+        const d = clone(defaults);
+        d.v4Migrated = true;
+        return d;
       }
       let db = migrate();
+      let lastSavedDb = clone(db);
       function persist() {
-        localStorage.setItem(K, JSON.stringify(db));
+        assertWritable();
+        BackupSecurity.validate(db);
+        const raw = JSON.stringify(db);
+        localStorage.setItem(K, raw);
+        expectedRaw = raw;
+        lastSavedDb = clone(db);
         queueAutoBackup();
+      }
+      function preserveBeforeImport() {
+        assertWritable();
+        // Keep an immutable local copy before any intentional import write.
+        const key = "turnop-before-import-" + crypto.randomUUID();
+        localStorage.setItem(key, JSON.stringify({
+          current: localStorage.getItem(K), legacy: localStorage.getItem(OLD)
+        }));
+      }
+      async function importBackup(raw) {
+        assertWritable();
+        const parsed = BackupSecurity.parse(raw);
+        // Older exports may omit IDs. Content-derived IDs make repeated imports idempotent.
+        for (const name of ["jornadas", "comp", "fin", "bolsillos", "movB"]) {
+          for (const row of parsed[name] || []) {
+            if (!row.id) {
+              const bytes = new TextEncoder().encode(name + ":" + cloudStable(row));
+              const hash = await crypto.subtle.digest("SHA-256", bytes);
+              row.id = "legacy-" + Array.from(new Uint8Array(hash), b => b.toString(16).padStart(2, "0")).join("");
+            }
+          }
+        }
+        assertWritable();
+        const incoming = normalize(parsed);
+        BackupSecurity.merge(db, incoming); // Detect conflicts before asking.
+        if (!await confirmarAccion("Se agregarán los registros nuevos del respaldo. Se conservarán tus registros y tu configuración actual. ¿Continuar?")) return false;
+        // Recompute after confirmation in case local state changed meanwhile.
+        const next = BackupSecurity.merge(db, incoming);
+        preserveBeforeImport();
+        const rawNext = JSON.stringify(next);
+        localStorage.setItem(K, rawNext);
+        expectedRaw = rawNext;
+        lastSavedDb = clone(next);
+        db = next;
+        render();
+        queueAutoBackup();
+        toast("Registros del respaldo agregados");
+        return true;
       }
 
       // Respaldo explícito: nunca sobrescribe datos locales sin confirmación.
@@ -1556,14 +1630,52 @@
         return JSON.stringify(x);
       }
       const AUTO_KEY = "turnop-auto-backup-v1";
+      const CONSENT_KEY = "turnop-cloud-consent-v1";
+      let sdkLoading = null;
+      function cloudAllowed() {
+        try { return !storageBlocked && localStorage.getItem(CONSENT_KEY) === "accepted"; }
+        catch { return false; }
+      }
+      async function requireCloudConsent() {
+        assertWritable();
+        if (cloudAllowed()) return true;
+        const answer = confirmarAccion("¿Permitir respaldos en Supabase? Se enviarán tus jornadas, remuneraciones, descansos y registros financieros. No tienen cifrado de extremo a extremo. Esta sesión pertenece a este navegador; no garantiza recuperación en otro dispositivo. Puedes desactivarlo cuando quieras. El respaldo automático se activa por separado.");
+        document.querySelector(".confirmAccept").textContent = "Permitir respaldo";
+        if (!await answer) return false;
+        assertWritable();
+        localStorage.setItem(CONSENT_KEY, "accepted");
+        autoLabel();
+        return true;
+      }
+      function revokeCloudConsent() {
+        localStorage.setItem(CONSENT_KEY, "declined");
+        localStorage.setItem(AUTO_KEY, "off");
+        clearTimeout(autoTimer);
+        autoLabel();
+        estadoNube("Respaldo desactivado. No se borraron tus datos ni respaldos existentes. Una solicitud ya enviada podría terminar.");
+      }
+      function loadCloudSdk() {
+        if (!cloudAllowed()) return Promise.reject(new Error("Primero autoriza el respaldo en la nube."));
+        if (window.supabase?.createClient) return Promise.resolve();
+        if (!sdkLoading) sdkLoading = new Promise((resolve, reject) => {
+          const script = document.createElement("script");
+          script.src = "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js";
+          script.onload = () => resolve();
+          script.onerror = () => { script.remove(); sdkLoading = null; reject(new Error("No se pudo cargar la conexión a Supabase")); };
+          document.head.appendChild(script);
+        });
+        return sdkLoading;
+      }
       let autoTimer = null, autoBusy = false, lastCloudSnapshot = null;
-      function autoEnabled() { return localStorage.getItem(AUTO_KEY) !== "off"; }
+      function autoEnabled() { return cloudAllowed() && localStorage.getItem(AUTO_KEY) === "on"; }
       function autoLabel() {
+        const status = document.getElementById("cloudConsentStatus");
+        if (status) status.textContent = cloudAllowed() ? "Respaldo en nube autorizado en este navegador." : "Tus datos se guardan solo en este dispositivo. La nube está desactivada.";
         const b = document.getElementById("cloudAutoBtn");
         if (b) b.textContent = autoEnabled() ? "Desactivar respaldo automático" : "Activar respaldo automático";
       }
       function queueAutoBackup() {
-        if (!autoEnabled()) return;
+        if (!autoEnabled() || storageBlocked) return;
         clearTimeout(autoTimer);
         autoTimer = setTimeout(autoBackup, 4000);
       }
@@ -1572,14 +1684,16 @@
           localStorage.setItem(AUTO_KEY, "off"); clearTimeout(autoTimer); autoLabel();
           estadoNube("Respaldo automático desactivado."); return;
         }
-        if (cloudBusy || autoBusy) return;
+        if (cloudBusy || autoBusy || !await requireCloudConsent()) return;
         autoBusy = true;
         try {
           const id = await sesionNube();
+          if (!cloudAllowed()) return;
           const { data, error } = await cloudClient.from("turno_backups").select("datos").eq("user_id", id).maybeSingle();
           if (error) throw error;
           if (!data || cloudStable(data.datos) !== cloudStable(db))
             throw new Error("Primero guarda un respaldo manual actualizado desde este dispositivo.");
+          if (!cloudAllowed()) return;
           lastCloudSnapshot = cloudStable(data.datos);
           localStorage.setItem(AUTO_KEY, "on"); autoLabel();
           estadoNube("Respaldo automático activado.");
@@ -1592,6 +1706,7 @@
         const snapshot = cloudStable(db);
         try {
           const id = await sesionNube();
+          if (!cloudAllowed()) return;
           const { data, error } = await cloudClient.from("turno_backups").select("datos").eq("user_id", id).maybeSingle();
           if (error) throw error;
           if (!data) {
@@ -1617,6 +1732,7 @@
             throw new Error("Respaldo remoto diferente: sincronización detenida para evitar pérdida de datos.");
           }
           if (snapshot !== cloudStable(db) || !autoEnabled()) return;
+          assertWritable();
           const copy = clone(db);
           if (!copy.jornadas.length && data.datos.jornadas?.length) {
             localStorage.setItem(AUTO_KEY, "off"); autoLabel();
@@ -1639,6 +1755,10 @@
         if (el) el.textContent = m;
       }
       async function sesionNube() {
+        assertWritable();
+        if (!cloudAllowed()) throw new Error("Primero autoriza el respaldo en la nube.");
+        await loadCloudSdk();
+        if (!cloudAllowed()) throw new Error("El permiso de respaldo está desactivado.");
         if (!navigator.onLine) throw new Error("Sin conexión a Internet");
         if (!window.supabase?.createClient) throw new Error("No se pudo cargar la conexión a Supabase");
         if (!cloudClient) cloudClient = window.supabase.createClient(CLOUD_URL, CLOUD_KEY, {
@@ -1646,6 +1766,7 @@
         });
         let { data: { session }, error } = await cloudClient.auth.getSession();
         if (error) throw error;
+        if (!cloudAllowed()) throw new Error("El permiso de respaldo está desactivado.");
         if (!session) {
           const created = await cloudClient.auth.signInAnonymously();
           if (created.error) throw created.error;
@@ -1655,11 +1776,13 @@
         return session.user.id;
       }
       async function subirRespaldoNube() {
-        if (cloudBusy) return;
+        if (cloudBusy || !await requireCloudConsent()) return;
         cloudBusy = true;
         estadoNube("Guardando respaldo…");
         try {
           const id = await sesionNube();
+          if (!cloudAllowed()) return;
+          assertWritable();
           const copia = clone(db);
           const { error } = await cloudClient.from("turno_backups").upsert(
             { user_id: id, datos: copia, actualizado_en: new Date().toISOString() },
@@ -1674,28 +1797,21 @@
         } finally { cloudBusy = false; }
       }
       async function restaurarRespaldoNube() {
-        if (cloudBusy) return;
+        if (cloudBusy || !await requireCloudConsent()) return;
         cloudBusy = true;
         estadoNube("Buscando respaldo…");
         try {
           const id = await sesionNube();
+          if (!cloudAllowed()) return;
           const { data, error } = await cloudClient.from("turno_backups")
             .select("datos,actualizado_en").eq("user_id", id).maybeSingle();
           if (error) throw error;
           if (!data) { estadoNube("No hay un respaldo en la nube para esta sesión."); return; }
-          const remoto = data.datos;
-          if (!remoto || !remoto.config || !Array.isArray(remoto.jornadas))
-            throw new Error("El respaldo no tiene un formato válido");
-          const ok = await confirmarAccion(
-            "Respaldo del " + new Date(data.actualizado_en).toLocaleString("es-CL") +
-            " (" + remoto.jornadas.length + " jornadas). Reemplazará tus datos locales. Antes se descargará una copia de seguridad. ¿Continuar?"
-          );
-          if (!ok) { estadoNube("Restauración cancelada; tus datos siguen intactos."); return; }
-          exportJSON();
-          db = normalize(remoto);
-          lastCloudSnapshot = cloudStable(remoto);
-          save("Respaldo de Supabase restaurado");
-          estadoNube("Respaldo restaurado correctamente.");
+          if (!cloudAllowed()) return;
+          if (await importBackup(JSON.stringify(data.datos))) {
+            lastCloudSnapshot = null;
+            estadoNube("Registros del respaldo agregados sin reemplazar tus datos.");
+          }
         } catch (e) {
           estadoNube("No se pudo restaurar: " + (e.message || "Error de conexión"));
         } finally { cloudBusy = false; }
@@ -1875,9 +1991,16 @@
         };
       }
       function save(msg) {
-        persist();
+        try { persist(); }
+        catch (error) {
+          db = clone(lastSavedDb);
+          render();
+          avisoApp("No se pudo guardar. Tus datos anteriores se conservaron. " + error.message);
+          return false;
+        }
         render();
         if (msg) toast(msg);
+        return true;
       }
       function estimarLiquido(r) {
         const c = db.config;
@@ -1961,7 +2084,7 @@
             .sort((a, b) => b.fecha.localeCompare(a.fecha))
             .map(
               (x) =>
-                `<div class="item compHistoryItem"><div class="top"><span>${x.fechaFin && x.fechaFin !== x.fecha ? `${fechaCL(x.fecha)} → ${fechaCL(x.fechaFin)}` : fechaCL(x.fecha)}</span><span>${x.tipo === "uso" ? `${x.cantidad} ${x.cantidad === 1 ? "día tomado" : "días tomados"}` : `Ajuste ${x.cantidad > 0 ? "+" : ""}${x.cantidad}`}</span></div>${x.nota ? `<small>${esc(x.nota)}</small>` : ""}${x.tipo === "uso" ? `<div class="actions"><button class="danger" onclick="anularComp('${x.id}')">Anular ${x.fechaFin && x.fechaFin !== x.fecha ? "período" : "descanso"}</button></div>` : ""}</div>`,
+                `<div class="item compHistoryItem"><div class="top"><span>${x.fechaFin && x.fechaFin !== x.fecha ? `${esc(fechaCL(x.fecha))} → ${esc(fechaCL(x.fechaFin))}` : esc(fechaCL(x.fecha))}</span><span>${x.tipo === "uso" ? `${esc(x.cantidad)} ${x.cantidad === 1 ? "día tomado" : "días tomados"}` : `Ajuste ${x.cantidad > 0 ? "+" : ""}${esc(x.cantidad)}`}</span></div>${x.nota ? `<small>${esc(x.nota)}</small>` : ""}${x.tipo === "uso" ? `<div class="actions"><button class="danger" data-record-action="anularComp" data-id="${esc(x.id)}">Anular ${x.fechaFin && x.fechaFin !== x.fecha ? "período" : "descanso"}</button></div>` : ""}</div>`,
             )
             .join("") ||
           '<div class="empty">Todavía no has usado compensativos.</div>';
@@ -2184,7 +2307,7 @@
       }
       function renderJ() {
         const filtro = document.getElementById("jFiltroMes");
-        const meses = [...new Set(db.jornadas.map(j => String(j.fecha || "").slice(0,7)).filter(m => /^\\d{4}-\\d{2}$/.test(m)))].sort().reverse();
+        const meses = [...new Set(db.jornadas.map(j => String(j.fecha || "").slice(0,7)).filter(m => /^\d{4}-\d{2}$/.test(m)))].sort().reverse();
         const seleccionado = filtro.value || "todos";
         filtro.innerHTML = '<option value="todos">Todos los meses</option>' + meses.map(m => '<option value="' + m + '">' + m.slice(5) + '-' + m.slice(0,4) + '</option>').join("");
         filtro.value = seleccionado === "todos" || meses.includes(seleccionado) ? seleccionado : "todos";
@@ -2208,7 +2331,7 @@
                     : (c.he / 60) * Number(db.config.valorHE),
                 ),
                 valorClass = c.trato ? "tratoValue" : c.he ? "heValue" : "";
-              return `<div class="item jornadaItem"><div class="top"><span>${fechaCL(j.fecha)}</span><span class="tag ${c.trato ? "trato" : c.he ? "he" : "ok"}">${label}</span></div><small>${j.tipo === "no_trabajado" ? "" : `${j.entrada || "--"} → ${j.salida || "--"}`} </small>${c.trato || c.he ? `<span class="jMoney ${valorClass}">${c.trato ? "Valor trato" : "HE estimadas"}: ${money(valor)}</span>` : ""}<div class="actions jornadaActions"><button class="secondary" onclick="editJ('${j.id}')">Editar</button><button class="danger" onclick="delJ('${j.id}')">Eliminar</button></div></div>`;
+              return `<div class="item jornadaItem"><div class="top"><span>${esc(fechaCL(j.fecha))}</span><span class="tag ${c.trato ? "trato" : c.he ? "he" : "ok"}">${label}</span></div><small>${j.tipo === "no_trabajado" ? "" : `${esc(j.entrada || "--")} → ${esc(j.salida || "--")}`} </small>${c.trato || c.he ? `<span class="jMoney ${valorClass}">${c.trato ? "Valor trato" : "HE estimadas"}: ${money(valor)}</span>` : ""}<div class="actions jornadaActions"><button class="secondary" data-record-action="editJ" data-id="${esc(j.id)}">Editar</button><button class="danger" data-record-action="delJ" data-id="${esc(j.id)}">Eliminar</button></div></div>`;
             })
             .join("") || '<div class="empty">Aún no registras jornadas.</div>';
       }
@@ -2378,7 +2501,7 @@
           ? db.bolsillos
               .map(
                 (b) =>
-                  `<div class="pocket"><div class="pocketHead"><div><div class="pocketName">${esc(b.nombre)}</div><small>${esc(b.cuenta)}</small></div><div class="pocketBalance">${money(saldoB(b.id))}</div></div><div class="actions pocketActions"><button class="greenBtn" onclick="abrirMovB('${b.id}','aporte')">+ Agregar dinero</button><button class="secondary" onclick="abrirMovB('${b.id}','retiro')">− Retirar</button><button class="secondary" onclick="editB('${b.id}')">Editar</button><button class="danger" onclick="delB('${b.id}')">Eliminar</button></div></div>`,
+                  `<div class="pocket"><div class="pocketHead"><div><div class="pocketName">${esc(b.nombre)}</div><small>${esc(b.cuenta)}</small></div><div class="pocketBalance">${money(saldoB(b.id))}</div></div><div class="actions pocketActions"><button class="greenBtn" data-record-action="abrirMovB" data-id="${esc(b.id)}" data-mode="aporte">+ Agregar dinero</button><button class="secondary" data-record-action="abrirMovB" data-id="${esc(b.id)}" data-mode="retiro">− Retirar</button><button class="secondary" data-record-action="editB" data-id="${esc(b.id)}">Editar</button><button class="danger" data-record-action="delB" data-id="${esc(b.id)}">Eliminar</button></div></div>`,
               )
               .join("")
           : '<div class="empty">Todavía no tienes bolsillos. Crea uno para Auto, Emergencia, Casa u otro ahorro.</div>';
@@ -2546,27 +2669,15 @@
         );
       }
       async function importJSON(e) {
-        let f = e.target.files[0];
-        if (!f) return;
-        let r = new FileReader();
-        r.onload = async () => {
-          try {
-            let x = JSON.parse(r.result);
-            if (!x.config || !Array.isArray(x.jornadas)) throw 0;
-            if (
-              await confirmarAccion(
-                "Esto reemplazará los datos actuales. ¿Continuar?",
-              )
-            ) {
-              db = normalize(x);
-              save("Respaldo recuperado");
-            }
-          } catch {
-            avisoApp("Ese archivo no es un respaldo válido");
-          }
-        };
-        r.readAsText(f);
+        const f = e.target.files[0];
         e.target.value = "";
+        if (!f) return;
+        try {
+          if (f.size > BackupSecurity.MAX_BYTES) throw new Error("El respaldo supera el máximo de 5 MiB.");
+          await importBackup(await f.text());
+        } catch (error) {
+          avisoApp(error.message || "Ese archivo no es un respaldo válido. No se cambió ningún dato.");
+        }
       }
       // Importa el mismo CSV que exporta Turno+, sin reemplazar datos existentes.
       function leerCSVTurno(texto) {
@@ -2666,12 +2777,15 @@
         download(`turno-plus-${localDate()}.csv`,csv,"text/csv;charset=utf-8");
       }
       async function borrarTodo() {
+        assertWritable();
         if (
           await confirmarAccion(
             "¿Seguro que quieres borrar TODOS tus datos de este dispositivo?",
           )
         ) {
+          preserveBeforeImport();
           localStorage.removeItem(OLD);
+          recoverySources[OLD] = null;
           db = clone(defaults);
           db.v4Migrated = true;
           localStorage.removeItem(AUTO_KEY); clearTimeout(autoTimer); autoLabel();
@@ -2878,11 +2992,27 @@
       toggleJ();
       autoLabel();
       window.addEventListener("online", queueAutoBackup);
-      persist();
+      // Opening the app must never overwrite a recoverable source, including legacy data.
       render();
+      function showRecovery() {
+        document.querySelector("main").inert = true;
+        document.getElementById("recoveryNotice").hidden = false;
+        document.getElementById("downloadRecovery").onclick = () => download(
+          "turno-plus-datos-para-recuperar.json", JSON.stringify(recoverySources, null, 2), "application/json"
+        );
+      }
+      if (storageBlocked) showRecovery();
+      else queueAutoBackup();
+      document.addEventListener("click", (event) => {
+        const button = event.target.closest("button[data-record-action]");
+        if (!button || storageBlocked) return;
+        const actions = {editJ, delJ, anularComp, editB, delB, abrirMovB};
+        const action = actions[button.dataset.recordAction];
+        if (Object.hasOwn(actions, button.dataset.recordAction)) action(button.dataset.id, button.dataset.mode);
+      });
       if ("serviceWorker" in navigator)
         navigator.serviceWorker
-          .register("sw.js?v=turno-plus-24")
+          .register("sw.js?v=hardening-v1")
           .then((reg) => reg.update())
           .catch(() => {});
     </script>
