@@ -1629,7 +1629,8 @@
         if (x && typeof x === "object") return "{" + Object.keys(x).sort().map(k => JSON.stringify(k) + ":" + cloudStable(x[k])).join(",") + "}";
         return JSON.stringify(x);
       }
-      const AUTO_KEY = "turnop-auto-backup-v1";
+      // A legacy preference never counts as consent to automatic uploads.
+      const AUTO_KEY = "turnop-auto-backup-v2";
       const CONSENT_KEY = "turnop-cloud-consent-v1";
       let sdkLoading = null;
       function cloudAllowed() {
@@ -1639,8 +1640,7 @@
       async function requireCloudConsent() {
         assertWritable();
         if (cloudAllowed()) return true;
-        const answer = confirmarAccion("¿Permitir respaldos en Supabase? Se enviarán tus jornadas, remuneraciones, descansos y registros financieros. No tienen cifrado de extremo a extremo. Esta sesión pertenece a este navegador; no garantiza recuperación en otro dispositivo. Puedes desactivarlo cuando quieras. El respaldo automático se activa por separado.");
-        document.querySelector(".confirmAccept").textContent = "Permitir respaldo";
+        const answer = confirmarAccion("¿Permitir respaldos en Supabase? Se enviarán tus jornadas, remuneraciones, descansos y registros financieros. No tienen cifrado de extremo a extremo. Esta sesión pertenece a este navegador; no garantiza recuperación en otro dispositivo. Puedes desactivarlo cuando quieras. El respaldo automático se activa por separado.", {acceptText: "Permitir respaldo"});
         if (!await answer) return false;
         assertWritable();
         localStorage.setItem(CONSENT_KEY, "accepted");
@@ -1687,6 +1687,8 @@
         if (cloudBusy || autoBusy || !await requireCloudConsent()) return;
         autoBusy = true;
         try {
+          if (!await confirmarAccion("¿Activar el respaldo automático? Turno+ enviará tus cambios a Supabase sin preguntarte cada vez. Puedes desactivarlo cuando quieras.", {acceptText: "Activar respaldo automático"})) return;
+          if (!cloudAllowed()) return;
           const id = await sesionNube();
           if (!cloudAllowed()) return;
           const { data, error } = await cloudClient.from("turno_backups").select("datos").eq("user_id", id).maybeSingle();
@@ -1739,7 +1741,7 @@
             throw new Error("Se impidió sobrescribir las jornadas con una lista vacía.");
           }
           const { error: saveError } = await cloudClient.from("turno_backups").update({
-            datos: copy, actualizado_en: new Date().toISOString()
+            datos: copy, actualizado_en: nextCloudTimestamp(data.actualizado_en)
           }).eq("user_id", id);
           if (saveError) throw saveError;
           lastCloudSnapshot = snapshot;
@@ -1775,6 +1777,11 @@
         if (!session?.user?.id) throw new Error("No se pudo iniciar la sesión anónima");
         return session.user.id;
       }
+      function nextCloudTimestamp(previous) {
+        const stamp = Date.parse(previous);
+        if (!Number.isFinite(stamp)) throw new Error("El respaldo remoto no tiene una revisión válida.");
+        return new Date(Math.max(Date.now(), stamp + 1)).toISOString();
+      }
       async function subirRespaldoNube() {
         if (cloudBusy || !await requireCloudConsent()) return;
         cloudBusy = true;
@@ -1784,11 +1791,41 @@
           if (!cloudAllowed()) return;
           assertWritable();
           const copia = clone(db);
-          const { error } = await cloudClient.from("turno_backups").upsert(
-            { user_id: id, datos: copia, actualizado_en: new Date().toISOString() },
-            { onConflict: "user_id" }
-          );
-          if (error) throw error;
+          BackupSecurity.validate(copia);
+          const snapshot = cloudStable(copia);
+          const {data: remoto, error: readError} = await cloudClient.from("turno_backups")
+            .select("datos,actualizado_en").eq("user_id", id).maybeSingle();
+          if (readError) throw readError;
+          if (!cloudAllowed()) return;
+          assertWritable();
+          if (snapshot !== cloudStable(db)) throw new Error("Tus datos cambiaron mientras se preparaba el respaldo. Intenta nuevamente.");
+          if (remoto) {
+            BackupSecurity.parse(JSON.stringify(remoto.datos));
+            const previous = cloudStable(remoto.datos);
+            if (previous !== snapshot) {
+              if (!lastCloudSnapshot || previous !== lastCloudSnapshot)
+                throw new Error("Hay un respaldo remoto diferente. No se sobrescribió. Recupera sus registros antes de guardar.");
+              const removesRecords = ["jornadas", "comp", "fin", "bolsillos", "movB"].some(name =>
+                (remoto.datos[name] || []).some(row => !row.id || !(copia[name] || []).some(local => local.id === row.id))
+              );
+              if (removesRecords) throw new Error("El respaldo remoto contiene registros que faltan aquí. No se borraron; recupera sus registros antes de guardar.");
+              // Use only revision metadata in the URL, never sensitive backup JSON.
+              // Every writer in this version advances actualizado_en, even in the same millisecond.
+              if (typeof remoto.actualizado_en !== "string" || !Number.isFinite(Date.parse(remoto.actualizado_en)))
+                throw new Error("El respaldo remoto no tiene una revisión válida. No se sobrescribió.");
+              const {data: updated, error: updateError} = await cloudClient.from("turno_backups")
+                .update({datos: copia, actualizado_en: nextCloudTimestamp(remoto.actualizado_en)})
+                .eq("user_id", id).eq("actualizado_en", remoto.actualizado_en).select("user_id");
+              if (updateError) throw updateError;
+              if (!updated || updated.length !== 1) throw new Error("El respaldo remoto cambió. No se sobrescribió; vuelve a revisarlo.");
+            }
+          } else {
+            // INSERT only: a concurrently created row must cause a conflict, never an upsert.
+            const {data: inserted, error: insertError} = await cloudClient.from("turno_backups")
+              .insert({user_id: id, datos: copia, actualizado_en: new Date().toISOString()}).select("user_id");
+            if (insertError) throw insertError;
+            if (!inserted || inserted.length !== 1) throw new Error("No se pudo confirmar el respaldo. Revisa el estado remoto antes de reintentar.");
+          }
           lastCloudSnapshot = cloudStable(copia);
           estadoNube("Respaldo guardado en Supabase: " + new Date().toLocaleString("es-CL"));
           toast("Respaldo en la nube guardado");
@@ -1809,7 +1846,7 @@
           if (!data) { estadoNube("No hay un respaldo en la nube para esta sesión."); return; }
           if (!cloudAllowed()) return;
           if (await importBackup(JSON.stringify(data.datos))) {
-            lastCloudSnapshot = null;
+            lastCloudSnapshot = cloudStable(data.datos);
             estadoNube("Registros del respaldo agregados sin reemplazar tus datos.");
           }
         } catch (e) {
@@ -2198,7 +2235,7 @@
           field.select();
         });
       }
-      function confirmarAccion(mensaje) {
+      function confirmarAccion(mensaje, {acceptText = "Confirmar", cancelText = "Cancelar"} = {}) {
         return new Promise((resolve) => {
           const overlay = document.createElement("div");
           overlay.className = "confirmOverlay";
@@ -2210,6 +2247,8 @@
           const prev = document.activeElement;
           const cancel = overlay.querySelector(".confirmCancel"),
             accept = overlay.querySelector(".confirmAccept");
+          cancel.textContent = cancelText;
+          accept.textContent = acceptText;
           let done = false;
           function close(v) {
             if (done) return;
@@ -3012,7 +3051,7 @@
       });
       if ("serviceWorker" in navigator)
         navigator.serviceWorker
-          .register("sw.js?v=hardening-v1")
+          .register("sw.js?v=hardening-v1-review1")
           .then((reg) => reg.update())
           .catch(() => {});
     </script>

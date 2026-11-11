@@ -72,6 +72,31 @@ class BrowserTests(unittest.TestCase):
         raw = value if isinstance(value, str) else json.dumps(value)
         page.locator('#importFile').set_input_files({'name':'synthetic.json','mimeType':'application/json','buffer':raw.encode()})
 
+    def mock_cloud(self, page, remote=None):
+        if remote is not None:
+            remote.setdefault('actualizado_en','2026-11-01T00:00:00.000Z')
+        page.evaluate('''(remote) => {
+          window.__calls=0;window.__remote=remote;window.__writes=0;window.__race=null;window.__readError=false;
+          window.supabase={createClient:()=>{window.__calls++;return {
+            auth:{getSession:async()=>({data:{session:{user:{id:'synthetic-user'}}},error:null})},
+            from:()=>({
+              select:()=>({eq:()=>({maybeSingle:async()=>({data:structuredClone(window.__remote),error:window.__readError?{message:'read failed'}:null})})}),
+              insert:(row)=>({select:async()=>{
+                if(window.__race)window.__remote=window.__race;
+                if(window.__remote)return {data:null,error:{message:'duplicate key'}};
+                window.__writes++;window.__remote=structuredClone(row);return {data:[{user_id:row.user_id}],error:null};
+              }}),
+              update:(row)=>{
+                const filters={};const q={eq:(k,v)=>{filters[k]=v;return q},select:async()=>{
+                  if(window.__race)window.__remote=window.__race;
+                  if(!window.__remote || window.__remote.actualizado_en!==filters.actualizado_en)return {data:[],error:null};
+                  window.__writes++;Object.assign(window.__remote,structuredClone(row));return {data:[{user_id:'synthetic-user'}],error:null};
+                }};return q;
+              }
+            })
+          }}};
+        }''',remote)
+
     def test_no_network_before_consent_even_with_legacy_auto_on(self):
         page = self.open({'turnop-auto-backup-v1':'on'})
         page.evaluate('autoBackup()')
@@ -216,10 +241,7 @@ class BrowserTests(unittest.TestCase):
 
     def test_consent_cancel_accept_revoke_with_mock_sdk(self):
         page = self.open()
-        page.evaluate('''() => { window.__calls=0; window.__remote=null; window.supabase={createClient:()=>{
-          window.__calls++;return {auth:{getSession:async()=>({data:{session:{user:{id:'synthetic-user'}}},error:null})},
-          from:()=>({upsert:async(row)=>{window.__remote=row;return {error:null}},
-          select:()=>({eq:()=>({maybeSingle:async()=>({data:window.__remote,error:null})})})})}; }}; }''')
+        self.mock_cloud(page)
         page.locator('#tabs button[data-p="historial"]').click()
         page.get_by_role('button',name='Guardar respaldo en nube',exact=True).click()
         page.locator('.confirmCancel').click()
@@ -231,6 +253,7 @@ class BrowserTests(unittest.TestCase):
         self.assertTrue(page.evaluate('cloudAllowed()'))
         self.assertFalse(page.evaluate('autoEnabled()'))
         page.locator('#cloudAutoBtn').click()
+        page.get_by_role('button',name='Activar respaldo automático',exact=True).last.click()
         page.wait_for_function('autoEnabled()')
         page.get_by_role('button',name='Desactivar nube',exact=True).click()
         self.assertFalse(page.evaluate('autoEnabled()'))
@@ -238,6 +261,130 @@ class BrowserTests(unittest.TestCase):
         page.evaluate('autoBackup()')
         self.assertEqual(page.evaluate('window.__calls'),1)
         self.assertEqual(self.external,[])
+
+    def test_legacy_auto_on_stays_off_after_general_consent_and_reload(self):
+        page=self.open({'turnop-auto-backup-v1':'on'})
+        self.mock_cloud(page)
+        page.locator('#tabs button[data-p="historial"]').click()
+        page.get_by_role('button',name='Guardar respaldo en nube',exact=True).click()
+        page.get_by_role('button',name='Permitir respaldo',exact=True).click()
+        page.wait_for_function('window.__writes===1')
+        self.assertFalse(page.evaluate('autoEnabled()'))
+        self.assertEqual(page.evaluate('localStorage.getItem("turnop-auto-backup-v1")'),'on')
+        page.reload(wait_until='networkidle')
+        self.assertFalse(page.evaluate('autoEnabled()'))
+        self.assertEqual(self.external,[])
+
+    def test_auto_requires_specific_confirmation_even_with_general_consent(self):
+        page=self.open({'turnop-auto-backup-v1':'on','turnop-cloud-consent-v1':'accepted'})
+        remote={'user_id':'synthetic-user','datos':page.evaluate('db')}
+        self.mock_cloud(page,remote)
+        page.locator('#tabs button[data-p="historial"]').click()
+        page.locator('#cloudAutoBtn').click()
+        self.assertEqual(page.locator('.confirmAccept').text_content(),'Activar respaldo automático')
+        page.locator('.confirmCancel').click()
+        self.assertFalse(page.evaluate('autoEnabled()'))
+        self.assertEqual(page.evaluate('window.__calls'),0)
+        page.locator('#cloudAutoBtn').click()
+        page.locator('.confirmAccept').click()
+        page.wait_for_function('autoEnabled()')
+        page.reload(wait_until='networkidle')
+        self.assertTrue(page.evaluate('autoEnabled()'))
+        page.evaluate('revokeCloudConsent()')
+
+    def test_confirmation_labels_are_local_and_reset_after_consent(self):
+        for answer in ('cancel','accept','escape'):
+            page=self.open()
+            page.evaluate('() => {window.__permission=requireCloudConsent()}')
+            self.assertEqual(page.locator('.confirmAccept').text_content(),'Permitir respaldo')
+            self.assertEqual(page.locator('.confirmCancel').text_content(),'Cancelar')
+            if answer=='escape':page.keyboard.press('Escape')
+            else:page.locator('.confirmAccept' if answer=='accept' else '.confirmCancel').click()
+            page.evaluate('() => {window.__ordinary=confirmarAccion("Eliminar un registro de prueba")}')
+            self.assertEqual(page.locator('.confirmAccept').text_content(),'Confirmar')
+            self.assertEqual(page.locator('.confirmCancel').text_content(),'Cancelar')
+            page.locator('.confirmCancel').click()
+        # A pre-existing ordinary dialog must not have its labels mutated globally.
+        page=self.open()
+        page.evaluate('() => {window.__ordinary=confirmarAccion("Acción normal");window.__permission=requireCloudConsent()}')
+        dialogs=page.locator('.confirmOverlay')
+        self.assertEqual(dialogs.nth(0).locator('.confirmAccept').text_content(),'Confirmar')
+        self.assertEqual(dialogs.nth(1).locator('.confirmAccept').text_content(),'Permitir respaldo')
+        dialogs.nth(1).locator('.confirmCancel').click()
+        dialogs.nth(0).locator('.confirmCancel').click()
+
+    def test_manual_backup_blocks_unknown_different_remote(self):
+        page=self.open({'turnop-cloud-consent-v1':'accepted'})
+        remote={'user_id':'synthetic-user','datos':self.sample(page)}
+        self.mock_cloud(page,remote)
+        page.evaluate('subirRespaldoNube()')
+        self.assertIn('remoto diferente',page.locator('#cloudStatus').text_content())
+        self.assertEqual(page.evaluate('window.__remote'),remote)
+        self.assertEqual(page.evaluate('window.__writes'),0)
+
+    def test_manual_backup_unchanged_remote_is_noop(self):
+        page=self.open({'turnop-cloud-consent-v1':'accepted'})
+        remote={'user_id':'synthetic-user','datos':page.evaluate('db')}
+        self.mock_cloud(page,remote)
+        page.evaluate('subirRespaldoNube()')
+        self.assertEqual(page.evaluate('window.__writes'),0)
+        self.assertIn('guardado',page.locator('#cloudStatus').text_content())
+
+    def test_manual_backup_never_removes_remote_records_even_with_known_baseline(self):
+        page=self.open({'turnop-cloud-consent-v1':'accepted'})
+        remote={'user_id':'synthetic-user','datos':self.sample(page)}
+        self.mock_cloud(page,remote)
+        page.evaluate('() => {lastCloudSnapshot=cloudStable(window.__remote.datos)}')
+        page.evaluate('subirRespaldoNube()')
+        self.assertEqual(page.evaluate('window.__writes'),0)
+        self.assertEqual(page.evaluate('window.__remote'),remote)
+        self.assertIn('registros que faltan',page.locator('#cloudStatus').text_content())
+
+    def test_manual_backup_updates_only_known_unchanged_baseline(self):
+        page=self.open({'turnop-cloud-consent-v1':'accepted'})
+        remote={'user_id':'synthetic-user','datos':page.evaluate('db')}
+        self.mock_cloud(page,remote)
+        page.evaluate('() => {lastCloudSnapshot=cloudStable(window.__remote.datos);db.config.nombre="Actualizado"}')
+        page.evaluate('subirRespaldoNube()')
+        self.assertEqual(page.evaluate('window.__writes'),1)
+        self.assertEqual(page.evaluate('window.__remote.datos.config.nombre'),'Actualizado')
+
+    def test_manual_backup_revision_invalid_blocks_and_future_clock_advances(self):
+        for stamp in ('invalid-revision','2090-01-01T00:00:00.000Z'):
+            page=self.open({'turnop-cloud-consent-v1':'accepted'})
+            remote={'user_id':'synthetic-user','datos':page.evaluate('db'),'actualizado_en':stamp}
+            self.mock_cloud(page,remote)
+            page.evaluate('() => {lastCloudSnapshot=cloudStable(window.__remote.datos);db.config.nombre="Actualizado"}')
+            page.evaluate('subirRespaldoNube()')
+            if stamp=='invalid-revision':
+                self.assertEqual(page.evaluate('window.__writes'),0)
+                self.assertEqual(page.evaluate('window.__remote'),remote)
+            else:
+                self.assertEqual(page.evaluate('window.__writes'),1)
+                self.assertEqual(page.evaluate('window.__remote.actualizado_en'),'2090-01-01T00:00:00.001Z')
+
+    def test_manual_backup_concurrent_update_and_insert_do_not_overwrite(self):
+        for exists in (True,False):
+            page=self.open({'turnop-cloud-consent-v1':'accepted'})
+            remote={'user_id':'synthetic-user','datos':page.evaluate('db')}
+            self.mock_cloud(page,remote if exists else None)
+            concurrent={'user_id':'synthetic-user','datos':self.sample(page),'actualizado_en':'2026-11-02T00:00:00.000Z'}
+            page.evaluate('''(race) => {window.__race=race;lastCloudSnapshot=cloudStable(db);db.config.nombre='Cambio local';}''',concurrent)
+            page.evaluate('subirRespaldoNube()')
+            self.assertEqual(page.evaluate('window.__writes'),0)
+            self.assertEqual(page.evaluate('window.__remote'),concurrent)
+            self.assertIn('No se pudo respaldar',page.locator('#cloudStatus').text_content())
+
+    def test_manual_backup_read_error_or_invalid_remote_never_writes(self):
+        for invalid in (False,True):
+            page=self.open({'turnop-cloud-consent-v1':'accepted'})
+            remote={'user_id':'synthetic-user','datos':{'config':{},'jornadas':None}} if invalid else None
+            self.mock_cloud(page,remote)
+            if not invalid:page.evaluate('window.__readError=true')
+            page.evaluate('subirRespaldoNube()')
+            self.assertEqual(page.evaluate('window.__writes'),0)
+            self.assertEqual(page.evaluate('window.__remote'),remote)
+            self.assertIn('No se pudo respaldar',page.locator('#cloudStatus').text_content())
 
     def test_overtime_money_compensation_and_edit_delete_regression(self):
         page=self.open()

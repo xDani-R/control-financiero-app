@@ -1,4 +1,4 @@
-const CACHE='turno-plus-hardening-v1';
+const CACHE='turno-plus-hardening-v1-review1';
 const ASSETS=['./','./index.html','./manifest.webmanifest','./backup-security.js'];
 self.addEventListener('install',event=>{
   self.skipWaiting();
