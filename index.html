@@ -1709,15 +1709,18 @@
         try {
           const id = await sesionNube();
           if (!cloudAllowed()) return;
-          const { data, error } = await cloudClient.from("turno_backups").select("datos").eq("user_id", id).maybeSingle();
+          const { data, error } = await cloudClient.from("turno_backups").select("datos,actualizado_en").eq("user_id", id).maybeSingle();
           if (error) throw error;
           if (!data) {
             if (lastCloudSnapshot) throw new Error("El respaldo remoto desapareció; sincronización detenida.");
             if (snapshot !== cloudStable(db) || !autoEnabled()) return;
-            const { error: insertError } = await cloudClient.from("turno_backups").insert({
+            assertWritable();
+            const { data: inserted, error: insertError } = await cloudClient.from("turno_backups").insert({
               user_id: id, datos: clone(db), actualizado_en: new Date().toISOString()
-            });
+            }).select("user_id");
             if (insertError) throw insertError;
+            if (!Array.isArray(inserted) || inserted.length !== 1)
+              throw new Error("No se pudo confirmar la creación del respaldo automático.");
             lastCloudSnapshot = snapshot;
             return;
           }
@@ -1740,10 +1743,14 @@
             localStorage.setItem(AUTO_KEY, "off"); autoLabel();
             throw new Error("Se impidió sobrescribir las jornadas con una lista vacía.");
           }
-          const { error: saveError } = await cloudClient.from("turno_backups").update({
+          const { data: updated, error: saveError } = await cloudClient.from("turno_backups").update({
             datos: copy, actualizado_en: nextCloudTimestamp(data.actualizado_en)
-          }).eq("user_id", id);
+          }).eq("user_id", id).eq("actualizado_en", data.actualizado_en).select("user_id");
           if (saveError) throw saveError;
+          if (!Array.isArray(updated) || updated.length !== 1) {
+            localStorage.setItem(AUTO_KEY, "off"); autoLabel();
+            throw new Error("El respaldo remoto cambió o no se pudo confirmar una única fila actualizada. Sincronización detenida; revisa el respaldo remoto.");
+          }
           lastCloudSnapshot = snapshot;
           estadoNube("Respaldo automático actualizado: " + new Date().toLocaleString("es-CL"));
         } catch(e) { estadoNube("Respaldo pendiente: " + e.message); }
@@ -3051,7 +3058,7 @@
       });
       if ("serviceWorker" in navigator)
         navigator.serviceWorker
-          .register("sw.js?v=hardening-v1-review1")
+          .register("sw.js?v=hardening-v1-review2")
           .then((reg) => reg.update())
           .catch(() => {});
     </script>

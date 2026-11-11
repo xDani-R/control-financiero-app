@@ -76,18 +76,29 @@ class BrowserTests(unittest.TestCase):
         if remote is not None:
             remote.setdefault('actualizado_en','2026-11-01T00:00:00.000Z')
         page.evaluate('''(remote) => {
-          window.__calls=0;window.__remote=remote;window.__writes=0;window.__race=null;window.__readError=false;
+          window.__calls=0;window.__remote=remote;window.__writes=0;window.__race=null;window.__readError=false;window.__writeError=false;window.__throwWrite=false;window.__updateResult=undefined;window.__insertResult=undefined;window.__readColumns=null;window.__updateFilters=null;
           window.supabase={createClient:()=>{window.__calls++;return {
             auth:{getSession:async()=>({data:{session:{user:{id:'synthetic-user'}}},error:null})},
             from:()=>({
-              select:()=>({eq:()=>({maybeSingle:async()=>({data:structuredClone(window.__remote),error:window.__readError?{message:'read failed'}:null})})}),
+              select:(columns)=>({eq:()=>({maybeSingle:async()=>{
+                window.__readColumns=columns;
+                const projected=window.__remote===null ? null : Object.fromEntries(columns.split(',').map(k=>[k,structuredClone(window.__remote[k])]));
+                return {data:projected,error:window.__readError?{message:'read failed'}:null};
+              }})}),
               insert:(row)=>({select:async()=>{
+                if(window.__throwWrite)throw new Error('network write failed');
+                if(window.__writeError)return {data:null,error:{message:'write denied'}};
+                if(window.__insertResult!==undefined)return {data:window.__insertResult,error:null};
                 if(window.__race)window.__remote=window.__race;
                 if(window.__remote)return {data:null,error:{message:'duplicate key'}};
                 window.__writes++;window.__remote=structuredClone(row);return {data:[{user_id:row.user_id}],error:null};
               }}),
               update:(row)=>{
                 const filters={};const q={eq:(k,v)=>{filters[k]=v;return q},select:async()=>{
+                  window.__updateFilters=structuredClone(filters);
+                  if(window.__throwWrite)throw new Error('network write failed');
+                  if(window.__writeError)return {data:null,error:{message:'write denied'}};
+                  if(window.__updateResult!==undefined)return {data:window.__updateResult,error:null};
                   if(window.__race)window.__remote=window.__race;
                   if(!window.__remote || window.__remote.actualizado_en!==filters.actualizado_en)return {data:[],error:null};
                   window.__writes++;Object.assign(window.__remote,structuredClone(row));return {data:[{user_id:'synthetic-user'}],error:null};
@@ -385,6 +396,103 @@ class BrowserTests(unittest.TestCase):
             self.assertEqual(page.evaluate('window.__writes'),0)
             self.assertEqual(page.evaluate('window.__remote'),remote)
             self.assertIn('No se pudo respaldar',page.locator('#cloudStatus').text_content())
+
+    def setup_auto_update(self):
+        page=self.open({'turnop-cloud-consent-v1':'accepted'})
+        remote={'user_id':'synthetic-user','datos':page.evaluate('db')}
+        self.mock_cloud(page,remote)
+        page.evaluate('''() => {
+          localStorage.setItem(AUTO_KEY,'on');
+          lastCloudSnapshot=cloudStable(db);
+          db.config.nombre='Cambio automático';
+        }''')
+        return page,remote
+
+    def test_auto_update_selects_revision_and_checks_one_updated_row(self):
+        page,remote=self.setup_auto_update()
+        page.evaluate('autoBackup()')
+        self.assertEqual(set(page.evaluate('window.__readColumns').split(',')),{'datos','actualizado_en'})
+        self.assertEqual(page.evaluate('window.__updateFilters'),{'user_id':'synthetic-user','actualizado_en':remote['actualizado_en']})
+        self.assertEqual(page.evaluate('window.__writes'),1)
+        self.assertEqual(page.evaluate('window.__remote.datos.config.nombre'),'Cambio automático')
+        self.assertGreater(page.evaluate('window.__remote.actualizado_en'),remote['actualizado_en'])
+        self.assertTrue(page.evaluate('lastCloudSnapshot===cloudStable(db)'))
+        self.assertIn('Respaldo automático actualizado',page.locator('#cloudStatus').text_content())
+        self.assertEqual(self.external,[])
+
+    def test_auto_update_concurrent_revision_preserves_remote_and_stops_sync(self):
+        page,remote=self.setup_auto_update()
+        concurrent={'user_id':'synthetic-user','datos':self.sample(page),'actualizado_en':'2090-01-01T00:00:00.000Z'}
+        page.evaluate('(race)=>{window.__race=race}',concurrent)
+        page.evaluate('autoBackup()')
+        self.assertEqual(page.evaluate('window.__writes'),0)
+        self.assertEqual(page.evaluate('window.__remote'),concurrent)
+        self.assertFalse(page.evaluate('autoEnabled()'))
+        self.assertFalse(page.evaluate('autoBusy'))
+        self.assertTrue(page.evaluate('(initial)=>lastCloudSnapshot===cloudStable(initial)',remote['datos']))
+        self.assertIn('Sincronización detenida',page.locator('#cloudStatus').text_content())
+        self.assertNotIn('Respaldo automático actualizado',page.locator('#cloudStatus').text_content())
+
+    def test_auto_update_write_failures_do_not_claim_success_or_advance_snapshot(self):
+        for failure in ('denied','network','missing','zero','multiple'):
+            page,remote=self.setup_auto_update()
+            page.evaluate('''(failure)=>{
+              if(failure==='denied')window.__writeError=true;
+              if(failure==='network')window.__throwWrite=true;
+              if(failure==='missing')window.__updateResult=null;
+              if(failure==='zero')window.__updateResult=[];
+              if(failure==='multiple')window.__updateResult=[{user_id:'synthetic-user'},{user_id:'unexpected'}];
+            }''',failure)
+            page.evaluate('autoBackup()')
+            self.assertEqual(page.evaluate('window.__writes'),0)
+            self.assertEqual(page.evaluate('window.__remote'),remote)
+            self.assertTrue(page.evaluate('(initial)=>lastCloudSnapshot===cloudStable(initial)',remote['datos']))
+            self.assertFalse(page.evaluate('autoBusy'))
+            self.assertIn('Respaldo pendiente',page.locator('#cloudStatus').text_content())
+            self.assertNotIn('Respaldo automático actualizado',page.locator('#cloudStatus').text_content())
+            if failure in ('missing','zero','multiple'):
+                self.assertFalse(page.evaluate('autoEnabled()'))
+
+    def test_auto_update_retries_after_transient_write_failure(self):
+        page,remote=self.setup_auto_update()
+        page.evaluate('() => {window.__writeError=true}')
+        page.evaluate('autoBackup()')
+        self.assertTrue(page.evaluate('(initial)=>lastCloudSnapshot===cloudStable(initial)',remote['datos']))
+        page.evaluate('() => {window.__writeError=false}')
+        page.evaluate('autoBackup()')
+        self.assertEqual(page.evaluate('window.__writes'),1)
+        self.assertTrue(page.evaluate('lastCloudSnapshot===cloudStable(db)'))
+        self.assertIn('Respaldo automático actualizado',page.locator('#cloudStatus').text_content())
+
+    def test_auto_insert_failure_or_unconfirmed_result_never_advances_snapshot(self):
+        for failure in ('denied','network','missing','zero','multiple'):
+            page=self.open({'turnop-cloud-consent-v1':'accepted'})
+            self.mock_cloud(page)
+            page.evaluate('''(failure)=>{
+              localStorage.setItem(AUTO_KEY,'on');
+              if(failure==='denied')window.__writeError=true;
+              if(failure==='network')window.__throwWrite=true;
+              if(failure==='missing')window.__insertResult=null;
+              if(failure==='zero')window.__insertResult=[];
+              if(failure==='multiple')window.__insertResult=[{user_id:'a'},{user_id:'b'}];
+            }''',failure)
+            page.evaluate('autoBackup()')
+            self.assertIsNone(page.evaluate('lastCloudSnapshot'))
+            self.assertIsNone(page.evaluate('window.__remote'))
+            self.assertEqual(page.evaluate('window.__writes'),0)
+            self.assertFalse(page.evaluate('autoBusy'))
+            self.assertIn('Respaldo pendiente',page.locator('#cloudStatus').text_content())
+
+    def test_auto_insert_confirms_single_row_before_advancing_snapshot(self):
+        page=self.open({'turnop-cloud-consent-v1':'accepted'})
+        self.mock_cloud(page)
+        page.evaluate('() => {localStorage.setItem(AUTO_KEY,"on")}')
+        page.evaluate('autoBackup()')
+        self.assertEqual(page.evaluate('window.__writes'),1)
+        self.assertTrue(page.evaluate('lastCloudSnapshot===cloudStable(db)'))
+        self.assertEqual(page.evaluate('window.__remote.datos'),page.evaluate('db'))
+        self.assertFalse(page.evaluate('autoBusy'))
+        self.assertEqual(self.external,[])
 
     def test_overtime_money_compensation_and_edit_delete_regression(self):
         page=self.open()
