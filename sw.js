@@ -1,5 +1,5 @@
-const CACHE='turno-plus-v24';
-const ASSETS=['./','./index.html','./manifest.webmanifest'];
+const CACHE='turno-plus-hardening-v1-review1';
+const ASSETS=['./','./index.html','./manifest.webmanifest','./backup-security.js'];
 self.addEventListener('install',event=>{
   self.skipWaiting();
   event.waitUntil(caches.open(CACHE).then(cache=>cache.addAll(ASSETS)));
