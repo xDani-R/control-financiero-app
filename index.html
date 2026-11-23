@@ -1091,10 +1091,10 @@
         <div class="card">
           <div class="sectionTitle">
             <h2 id="tituloPago">Mi pago de este mes</h2>
-            <input id="mesResumen" type="hidden" />
+            <div class="periodPicker"><label for="mesResumen">Período de pago</label><select id="mesResumen" aria-label="Consultar período de pago"></select><small id="rPeriodo" class="note"></small></div>
           </div>
           <input id="vistaResumen" type="hidden" value="pago" />
-          <span id="rPeriodo" hidden></span>
+          
           <div class="stat totalStat" style="margin-bottom:12px;padding:18px">
             <small>Líquido estimado a recibir</small>
             <b class="money" id="rSueldoTotal" style="font-size:27px">$0</b>
@@ -1887,11 +1887,42 @@
         const anticipo = Number(c.anticipo)||0;
         return {imponible, asignaciones, descuentos, anticipo, liquido: imponible + asignaciones - descuentos - anticipo};
       }
+      function fillPayPeriods() {
+        const select = document.getElementById("mesResumen");
+        const selected = select.value;
+        const today = localDate();
+        // The payment period containing today ends on the 22nd of the current month,
+        // or the 22nd of next month when today is after the 22nd.
+        const current = new Date(today + "T12:00");
+        if (current.getDate() > 22) current.setMonth(current.getMonth() + 1);
+        const latest = new Date(current.getFullYear(), current.getMonth(), 1);
+        const earliestRecord = db.jornadas.map(x => x.fecha).filter(Boolean).sort()[0];
+        const earliest = earliestRecord ? new Date(earliestRecord + "T12:00") : new Date(latest);
+        if (earliest.getDate() > 22) earliest.setMonth(earliest.getMonth() + 1);
+        const first = new Date(earliest.getFullYear(), earliest.getMonth(), 1);
+        first.setMonth(Math.min(first.getMonth(), first.getMonth())); // preserve calendar month
+        const start = new Date(Math.min(first.getTime(), new Date(latest.getFullYear(), latest.getMonth() - 11, 1).getTime()));
+        const options = [];
+        for (let d = new Date(latest), n = 0; d >= start && n < 240; d.setMonth(d.getMonth() - 1), n++) {
+          const value = d.getFullYear() + "-" + pad(d.getMonth() + 1);
+          const p = periodoPago(value);
+          options.push({value, label: p.start.split("-").reverse().join("/") + " – " + p.end.split("-").reverse().join("/")});
+        }
+        select.replaceChildren(...options.map(o => {
+          const opt = document.createElement("option");
+          opt.value = o.value; opt.textContent = o.label;
+          return opt;
+        }));
+        select.value = options.some(o => o.value === selected) ? selected : options[0].value;
+      }
       function render() {
         let m = mesResumen.value || monthNow(),
           v = "pago",
           r = summary(m, v),
           c = compStats();
+        fillPayPeriods();
+        m = mesResumen.value;
+        r = summary(m, v);
         tituloPago.textContent = "Pago de " + new Date(m + "-01T12:00").toLocaleDateString("es-CL",{month:"long",year:"numeric"});
         rPeriodo.textContent = periodLabel(m, v);
         rHE.textContent = fmtMin(r.he);
@@ -2868,7 +2899,8 @@
       document.querySelectorAll(".moneyInput").forEach(bindMoney);
       const hoy = new Date();
       const mesPago = new Date(hoy.getFullYear(), hoy.getMonth() + (hoy.getDate() > 22 ? 1 : 0), 1);
-      mesResumen.value = hMes.value = `${mesPago.getFullYear()}-${pad(mesPago.getMonth()+1)}`;
+      hMes.value = `${mesPago.getFullYear()}-${pad(mesPago.getMonth()+1)}`;
+      fillPayPeriods();
       jFecha.value = localDate();
       jFecha.addEventListener("change",detectarTipoJ);
       detectarTipoJ();
